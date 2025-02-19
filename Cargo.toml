@@ -1,0 +1,19 @@
+[package]
+name = "metaproxy"
+version = "0.1.0"
+edition = "2021"
+description = "High-performance HTTP/HTTPS proxy server using Actix-Web"
+
+[dependencies]
+actix-web = "4.4"
+reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"] }
+tokio = { version = "1.36", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = "2.5"
+thiserror = "1.0"
+futures = "0.3"
+bytes = "1.5"
+env_logger = "0.11"
