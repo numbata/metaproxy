@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+.github
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Development
+.idea/
+.vscode/
+*.iml
+.actrc
+
+# Documentation
+README.md
+BLUEPRINT.md
+LICENSE
+*.md
+
+# Tests
+tests/
+
+# Misc
+.env
+*.log
