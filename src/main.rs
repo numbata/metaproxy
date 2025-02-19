@@ -5,7 +5,7 @@ use std::time::Duration;
 use tracing::{info, Level};
 
 mod proxy;
-use proxy::{ProxyConfig, ProxyTarget};
+use proxy::{ProxyClient, ProxyConfig, ProxyTarget};
 
 async fn health_check() -> HttpResponse {
     HttpResponse::Ok()
@@ -19,7 +19,7 @@ async fn health_check() -> HttpResponse {
 async fn handle_request(
     req: HttpRequest,
     mut payload: web::Payload,
-    config: web::Data<ProxyConfig>,
+    proxy_client: web::Data<ProxyClient>,
 ) -> Result<HttpResponse, actix_web::Error> {
     const PROXY_HEADER: &str = "x-proxy-to";
     
@@ -28,7 +28,7 @@ async fn handle_request(
         req.headers()
             .get(PROXY_HEADER)
             .and_then(|h| h.to_str().ok()),
-        config.request_timeout,
+        proxy_client.config.request_timeout,
     )?;
 
     // Collect the request body
@@ -38,7 +38,7 @@ async fn handle_request(
     }
 
     // Forward the request to the target
-    proxy_target.forward_request(req, body).await
+    proxy_target.forward_request(req, body, &proxy_client).await
 }
 
 fn get_env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
@@ -63,21 +63,31 @@ async fn main() -> std::io::Result<()> {
         bind_host: env::var("PROXY_BIND_HOST")
             .unwrap_or_else(|_| "127.0.0.1".to_string()),
         bind_port: get_env_var_or("PROXY_BIND_PORT", 8081),
+        pool_idle_timeout: Duration::from_secs(
+            get_env_var_or("PROXY_POOL_IDLE_TIMEOUT_SECS", 90)
+        ),
+        pool_max_idle_per_host: get_env_var_or("PROXY_POOL_MAX_IDLE_PER_HOST", 32),
     };
 
     info!("Starting metaproxy server:");
     info!(" - Bind address: {}:{}", config.bind_host, config.bind_port);
     info!(" - Request timeout: {}s", config.request_timeout.as_secs());
+    info!(" - Pool idle timeout: {}s", config.pool_idle_timeout.as_secs());
+    info!(" - Max idle connections per host: {}", config.pool_max_idle_per_host);
 
-    let config = web::Data::new(config);
+    // Create the proxy client with connection pooling
+    let proxy_client = web::Data::new(ProxyClient::new(config.clone()).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    })?);
+    let bind_addr = format!("{}:{}", config.bind_host, config.bind_port);
 
     HttpServer::new(move || {
         App::new()
-            .app_data(config.clone())
+            .app_data(proxy_client.clone())
             .route("/health", web::get().to(health_check))
             .default_service(web::to(handle_request))
     })
-    .bind(format!("{}:{}", config.bind_host, config.bind_port))?
+    .bind(bind_addr)?
     .run()
     .await
 }

@@ -6,17 +6,21 @@ use actix_web::{
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use pin_project::pin_project;
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use std::{pin::Pin, task::{Context, Poll}, time::Duration};
+use std::{pin::Pin, sync::Arc, task::{Context, Poll}, time::Duration};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use url::Url;
 
+#[derive(Debug, Clone)]
 pub struct ProxyConfig {
     pub request_timeout: Duration,
     pub bind_host: String,
     pub bind_port: u16,
+    pub pool_idle_timeout: Duration,
+    pub pool_max_idle_per_host: usize,
 }
 
 impl Default for ProxyConfig {
@@ -25,7 +29,35 @@ impl Default for ProxyConfig {
             request_timeout: Duration::from_secs(30),
             bind_host: "127.0.0.1".to_string(),
             bind_port: 8081,
+            pool_idle_timeout: Duration::from_secs(90),
+            pool_max_idle_per_host: 32,
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct ProxyClient {
+    pub config: Arc<ProxyConfig>,
+    client: Client,
+}
+
+impl ProxyClient {
+    pub fn new(config: ProxyConfig) -> Result<Self, Error> {
+        let client = Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(config.request_timeout)
+            .pool_idle_timeout(config.pool_idle_timeout)
+            .pool_max_idle_per_host(config.pool_max_idle_per_host)
+            .build()
+            .map_err(|e| {
+                error!("Failed to create HTTP client: {}", e);
+                ErrorBadRequest(ProxyError::ClientError(e))
+            })?;
+
+        Ok(Self {
+            config: Arc::new(config),
+            client,
+        })
     }
 }
 
@@ -41,6 +73,8 @@ pub enum ProxyError {
     RequestError(#[from] reqwest::Error),
     #[error("Request timeout after {} seconds", .0.as_secs())]
     Timeout(Duration),
+    #[error("Failed to create HTTP client: {0}")]
+    ClientError(reqwest::Error),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -103,16 +137,8 @@ impl ProxyTarget {
         &self,
         req: HttpRequest,
         body: Vec<u8>,
+        proxy_client: &ProxyClient,
     ) -> Result<HttpResponse, Error> {
-        let client = reqwest::Client::builder()
-            .danger_accept_invalid_certs(true)
-            .timeout(self.timeout)
-            .build()
-            .map_err(|e| {
-                error!("Failed to create HTTP client: {}", e);
-                ErrorBadRequest(ProxyError::RequestError(e))
-            })?;
-
         let method = req.method().clone();
         let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("");
         let query = req.uri().query().unwrap_or("");
@@ -125,7 +151,7 @@ impl ProxyTarget {
         info!("Forwarding {} request to: {}", method, target_url);
 
         // Build request
-        let mut proxy_req = client.request(method.clone(), &target_url);
+        let mut proxy_req = proxy_client.client.request(method.clone(), &target_url);
 
         // Forward headers, excluding hop-by-hop headers
         for (key, value) in req.headers() {

@@ -152,19 +152,38 @@ The proxy server can be configured using the following environment variables:
 | `PROXY_BIND_HOST` | Host address to bind the server to | `127.0.0.1` |
 | `PROXY_BIND_PORT` | Port number to listen on | `8081` |
 | `PROXY_REQUEST_TIMEOUT_SECS` | Timeout in seconds for upstream requests | `30` |
+| `PROXY_POOL_IDLE_TIMEOUT_SECS` | How long to keep idle connections in the pool | `90` |
+| `PROXY_POOL_MAX_IDLE_PER_HOST` | Maximum number of idle connections per host | `32` |
 
 ### Examples
 
 ```bash
-# Development: bind to localhost with default timeout
+# Development: bind to localhost with default timeout and pool settings
 PROXY_BIND_HOST=127.0.0.1 PROXY_BIND_PORT=8081 cargo run
 
-# Testing: use custom port and longer timeout
-PROXY_BIND_HOST=127.0.0.1 PROXY_BIND_PORT=3000 PROXY_REQUEST_TIMEOUT_SECS=60 cargo run
+# Testing: use custom port, longer timeout, and larger connection pool
+PROXY_BIND_HOST=127.0.0.1 \
+PROXY_BIND_PORT=3000 \
+PROXY_REQUEST_TIMEOUT_SECS=60 \
+PROXY_POOL_MAX_IDLE_PER_HOST=64 \
+cargo run
 
-# Production: bind to all interfaces
-PROXY_BIND_HOST=0.0.0.0 PROXY_BIND_PORT=80 PROXY_REQUEST_TIMEOUT_SECS=30 cargo run
+# Production: bind to all interfaces with optimized pool settings
+PROXY_BIND_HOST=0.0.0.0 \
+PROXY_BIND_PORT=80 \
+PROXY_REQUEST_TIMEOUT_SECS=30 \
+PROXY_POOL_IDLE_TIMEOUT_SECS=120 \
+PROXY_POOL_MAX_IDLE_PER_HOST=128 \
+cargo run
 ```
+
+### Connection Pooling
+
+The proxy server uses connection pooling to improve performance by:
+- Reusing connections to the same host instead of creating new ones
+- Maintaining a pool of idle connections for quick reuse
+- Limiting the number of connections per host to prevent resource exhaustion
+- Automatically cleaning up idle connections after a configurable timeout
 
 ---
 
