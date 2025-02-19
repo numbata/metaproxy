@@ -1,5 +1,5 @@
-use std::{env, time::Duration};
 use actix_web::{web, App, HttpServer};
+use std::{env, time::Duration};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
