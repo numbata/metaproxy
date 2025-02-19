@@ -18,11 +18,22 @@ A Rust HTTP/HTTPS proxy server that supports request forwarding through other pr
 
 ## Quick Start
 
-### Using Docker 🐳
+### Download Binary 📦
+
+Grab the latest binary for your platform from our [releases page](https://github.com/numbata/metaproxy/releases):
 
 ```bash
-docker pull numbata/metaproxy
-docker run -p 8081:8081 metaproxy
+# Linux (x86_64)
+curl -LO "https://github.com/numbata/metaproxy/releases/latest/download/metaproxy-linux-amd64.tar.gz"
+tar xzf metaproxy-linux-amd64.tar.gz
+
+# macOS (x86_64)
+curl -LO "https://github.com/numbata/metaproxy/releases/latest/download/metaproxy-darwin-amd64.tar.gz"
+tar xzf metaproxy-darwin-amd64.tar.gz
+
+# macOS (ARM64)
+curl -LO "https://github.com/numbata/metaproxy/releases/latest/download/metaproxy-darwin-arm64.tar.gz"
+tar xzf metaproxy-darwin-arm64.tar.gz
 ```
 
 ### From Source 🛠️
