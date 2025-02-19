@@ -1,9 +1,11 @@
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
 use futures::StreamExt;
+use std::env;
+use std::time::Duration;
 use tracing::{info, Level};
 
 mod proxy;
-use proxy::ProxyTarget;
+use proxy::{ProxyConfig, ProxyTarget};
 
 async fn health_check() -> HttpResponse {
     HttpResponse::Ok()
@@ -17,14 +19,16 @@ async fn health_check() -> HttpResponse {
 async fn handle_request(
     req: HttpRequest,
     mut payload: web::Payload,
+    config: web::Data<ProxyConfig>,
 ) -> Result<HttpResponse, actix_web::Error> {
     const PROXY_HEADER: &str = "x-proxy-to";
-
+    
     // Extract and validate the X-Proxy-To header
     let proxy_target = ProxyTarget::from_header(
         req.headers()
             .get(PROXY_HEADER)
             .and_then(|h| h.to_str().ok()),
+        config.request_timeout,
     )?;
 
     // Collect the request body
@@ -37,19 +41,43 @@ async fn handle_request(
     proxy_target.forward_request(req, body).await
 }
 
+fn get_env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
+    env::var(key)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
+}
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize logging with the subscriber
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .init();
 
-    info!("Starting metaproxy server...");
+    // Read configuration from environment
+    let config = ProxyConfig {
+        request_timeout: Duration::from_secs(
+            get_env_var_or("PROXY_REQUEST_TIMEOUT_SECS", 30)
+        ),
+        bind_host: env::var("PROXY_BIND_HOST")
+            .unwrap_or_else(|_| "127.0.0.1".to_string()),
+        bind_port: get_env_var_or("PROXY_BIND_PORT", 8081),
+    };
 
-    HttpServer::new(|| {
+    info!("Starting metaproxy server:");
+    info!(" - Bind address: {}:{}", config.bind_host, config.bind_port);
+    info!(" - Request timeout: {}s", config.request_timeout.as_secs());
+
+    let config = web::Data::new(config);
+
+    HttpServer::new(move || {
         App::new()
+            .app_data(config.clone())
             .route("/health", web::get().to(health_check))
             .default_service(web::to(handle_request))
     })
-    .bind("127.0.0.1:8081")?
+    .bind(format!("{}:{}", config.bind_host, config.bind_port))?
     .run()
     .await
 }

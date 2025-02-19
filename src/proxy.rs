@@ -1,16 +1,33 @@
-use actix_web::{error::ErrorBadRequest, http::StatusCode, Error, HttpRequest, HttpResponse};
+use actix_web::{
+    error::ErrorBadRequest,
+    http::StatusCode,
+    Error, HttpRequest, HttpResponse,
+};
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
-use std::{
-    pin::Pin,
-    task::{Context, Poll},
-};
+use std::{pin::Pin, task::{Context, Poll}, time::Duration};
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use url::Url;
+
+pub struct ProxyConfig {
+    pub request_timeout: Duration,
+    pub bind_host: String,
+    pub bind_port: u16,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(30),
+            bind_host: "127.0.0.1".to_string(),
+            bind_port: 8081,
+        }
+    }
+}
 
 #[derive(Debug, Error)]
 pub enum ProxyError {
@@ -22,6 +39,8 @@ pub enum ProxyError {
     UrlParseError(#[from] url::ParseError),
     #[error("Failed to forward request: {0}")]
     RequestError(#[from] reqwest::Error),
+    #[error("Request timeout after {} seconds", .0.as_secs())]
+    Timeout(Duration),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -29,6 +48,8 @@ pub struct ProxyTarget {
     pub url: Url,
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(skip)]
+    pub timeout: Duration,
 }
 
 #[pin_project]
@@ -46,7 +67,7 @@ impl Stream for StreamingBody {
 }
 
 impl ProxyTarget {
-    pub fn from_header(header_value: Option<&str>) -> Result<Self, Error> {
+    pub fn from_header(header_value: Option<&str>, timeout: Duration) -> Result<Self, Error> {
         let header_value = header_value.ok_or_else(|| {
             error!("X-Proxy-To header is missing");
             ErrorBadRequest(ProxyError::MissingHeader)
@@ -74,6 +95,7 @@ impl ProxyTarget {
             username,
             password: url.password().map(|s| s.to_string()),
             url,
+            timeout,
         })
     }
 
@@ -84,6 +106,7 @@ impl ProxyTarget {
     ) -> Result<HttpResponse, Error> {
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
+            .timeout(self.timeout)
             .build()
             .map_err(|e| {
                 error!("Failed to create HTTP client: {}", e);
@@ -117,10 +140,17 @@ impl ProxyTarget {
         }
 
         // Send request and handle response
-        let response = proxy_req.send().await.map_err(|e| {
-            error!("Failed to forward request: {}", e);
-            ErrorBadRequest(ProxyError::RequestError(e))
-        })?;
+        let response = match proxy_req.send().await {
+            Ok(resp) => resp,
+            Err(e) if e.is_timeout() => {
+                error!("Request timed out after {} seconds", self.timeout.as_secs());
+                return Err(ErrorBadRequest(ProxyError::Timeout(self.timeout)));
+            }
+            Err(e) => {
+                error!("Failed to forward request: {}", e);
+                return Err(ErrorBadRequest(ProxyError::RequestError(e)));
+            }
+        };
 
         let status = response.status();
         let headers = response.headers().clone();
@@ -183,33 +213,47 @@ mod tests {
     #[test]
     fn test_proxy_target_from_valid_header() {
         let header = "http://proxy.example.com:8080";
-        let target = ProxyTarget::from_header(Some(header)).unwrap();
+        let timeout = Duration::from_secs(30);
+        let target = ProxyTarget::from_header(Some(header), timeout).unwrap();
         assert_eq!(target.url.as_str(), format!("{}/", header));
         assert_eq!(target.username, None);
         assert_eq!(target.password, None);
+        assert_eq!(target.timeout, timeout);
+    }
+
+    #[test]
+    fn test_proxy_target_with_custom_timeout() {
+        let header = "http://proxy.example.com:8080";
+        let custom_timeout = Duration::from_secs(60);
+        let target = ProxyTarget::from_header(Some(header), custom_timeout).unwrap();
+        assert_eq!(target.timeout, custom_timeout);
     }
 
     #[test]
     fn test_proxy_target_with_auth() {
         let header = "http://user:pass@proxy.example.com:8080";
-        let target = ProxyTarget::from_header(Some(header)).unwrap();
+        let timeout = Duration::from_secs(30);
+        let target = ProxyTarget::from_header(Some(header), timeout).unwrap();
         assert_eq!(target.username, Some("user".to_string()));
         assert_eq!(target.password, Some("pass".to_string()));
     }
 
     #[test]
     fn test_proxy_target_missing_header() {
-        assert!(ProxyTarget::from_header(None).is_err());
+        let timeout = Duration::from_secs(30);
+        assert!(ProxyTarget::from_header(None, timeout).is_err());
     }
 
     #[test]
     fn test_proxy_target_invalid_url() {
-        assert!(ProxyTarget::from_header(Some("not a url")).is_err());
+        let timeout = Duration::from_secs(30);
+        assert!(ProxyTarget::from_header(Some("not a url"), timeout).is_err());
     }
 
     #[test]
     fn test_proxy_target_invalid_scheme() {
-        assert!(ProxyTarget::from_header(Some("ftp://proxy.example.com")).is_err());
+        let timeout = Duration::from_secs(30);
+        assert!(ProxyTarget::from_header(Some("ftp://proxy.example.com"), timeout).is_err());
     }
 
     #[test]
