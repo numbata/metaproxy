@@ -62,22 +62,22 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - Basic errors such as unreachable upstream proxies are handled gracefully.
 
 **Todo:**
-- [ ] Use `reqwest` to send requests to the specified proxy.
-- [ ] Preserve HTTP methods and headers.
-- [ ] Return responses from the upstream proxy to the client.
+- [x] Use `reqwest` to send requests to the specified proxy.
+- [x] Preserve HTTP methods and headers.
+- [x] Return responses from the upstream proxy to the client.
 
-### **4. Handle Errors and Edge Cases**
-**Goal:** Ensure stability by handling failure scenarios properly.
+### **4. Handle Request Body and Streaming**
+**Goal:** Support large request and response bodies through streaming.
 
 **Success Criteria:**
-- The proxy returns appropriate error responses for failed upstream connections.
-- Timeouts and connection errors do not crash the application.
-- Unhandled exceptions are logged and do not expose sensitive data.
+- Large request bodies are correctly forwarded.
+- Response bodies are streamed back to the client.
+- Memory usage remains constant regardless of payload size.
 
 **Todo:**
-- [ ] Implement connection timeout handling.
-- [ ] Handle cases where upstream proxies reject requests.
-- [ ] Gracefully return error messages to the client.
+- [ ] Implement request body streaming.
+- [ ] Implement response body streaming.
+- [ ] Add proper error handling for stream interruptions.
 
 ### **5. Optimize Connection Handling and Performance**
 **Goal:** Improve efficiency by reducing overhead and maximizing throughput.

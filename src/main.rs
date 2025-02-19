@@ -13,24 +13,26 @@ async fn health_check() -> HttpResponse {
         }))
 }
 
-async fn handle_request(req: HttpRequest) -> Result<HttpResponse, actix_web::Error> {
+async fn handle_request(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, actix_web::Error> {
     const PROXY_HEADER: &str = "x-proxy-to";
-
+    
     // Extract and validate the X-Proxy-To header
     let proxy_target = ProxyTarget::from_header(
         req.headers()
             .get(PROXY_HEADER)
-            .and_then(|h| h.to_str().ok()),
+            .and_then(|h| h.to_str().ok())
     )?;
 
-    // For now, return the parsed proxy information
-    Ok(HttpResponse::Ok().json(proxy_target))
+    // Forward the request to the target
+    proxy_target.forward_request(req, body).await
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize logging with the subscriber
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .init();
 
     info!("Starting metaproxy server...");
 
