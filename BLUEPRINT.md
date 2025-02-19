@@ -85,13 +85,13 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 **Success Criteria:**
 - Connection pooling reduces unnecessary connection creation overhead.
 - Streaming responses minimize memory usage.
-- DNS resolution and retries improve reliability.
+- Timeouts and retries improve reliability.
 
 **Todo:**
 - [x] Implement **connection pooling** using `reqwest`.
 - [x] Enable **streaming responses** to prevent memory overuse.
 - [ ] Set up **timeouts and retry mechanisms**.
-- [ ] Optimize **DNS resolution**.
+- [ ] Optimize **load balancing**.
 
 ### **6. Implement Structured Logging**
 **Goal:** Provide clear, structured logs for debugging and request tracking.
@@ -208,7 +208,6 @@ The proxy server uses connection pooling to improve performance by:
 - [x] Connection pooling using `reqwest`
 - [x] Enable streaming responses to prevent memory overuse
 - [ ] Set up timeouts and retry mechanisms
-- [ ] Optimize DNS resolution
 - [ ] Load balancing support (future enhancement)
 
 ### Security Features
