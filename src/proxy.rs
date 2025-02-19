@@ -5,11 +5,11 @@ use actix_web::{
     HttpRequest, HttpResponse,
 };
 use bytes::Bytes;
-use futures::{stream::StreamExt, Stream};
+use futures::{StreamExt, Stream};
 use pin_project::pin_project;
 use reqwest::{
     header::HeaderName,
-    Client,
+    Client, Proxy,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -48,37 +48,42 @@ impl Default for ProxyConfig {
 #[derive(Clone)]
 pub struct ProxyClient {
     pub config: Arc<ProxyConfig>,
-    client: Client,
     metrics: web::Data<HealthMetrics>,
 }
 
 impl ProxyClient {
     pub fn new(config: ProxyConfig, metrics: web::Data<HealthMetrics>) -> Result<Self, ActixError> {
-        let client = Client::builder()
-            .danger_accept_invalid_certs(true)
-            .timeout(config.request_timeout)
-            .pool_idle_timeout(config.pool_idle_timeout)
-            .pool_max_idle_per_host(config.pool_max_idle_per_host)
-            .build()
-            .map_err(|e| {
-                error!("Failed to create HTTP client: {}", e);
-                ErrorBadRequest(ProxyError::ClientError(e.to_string()))
-            })?;
-
         Ok(Self {
             config: Arc::new(config),
-            client,
             metrics,
         })
     }
 
     pub fn get_pool_stats(&self) -> PoolStats {
-        // Note: reqwest doesn't expose pool stats directly
-        // This is a placeholder that could be enhanced with custom connection tracking
         PoolStats {
-            active_connections: 0, // TODO: Track active connections
-            idle_connections: 0,   // TODO: Track idle connections
+            active_connections: 0,
+            idle_connections: 0,
         }
+    }
+
+    fn create_client_with_proxy(&self, proxy_url: &str) -> Result<Client, ActixError> {
+        let proxy = Proxy::all(proxy_url)
+            .map_err(|e| {
+                error!("Failed to create proxy: {}", e);
+                ErrorBadRequest(e.to_string())
+            })?;
+
+        Client::builder()
+            .danger_accept_invalid_certs(true)
+            .timeout(self.config.request_timeout)
+            .pool_idle_timeout(self.config.pool_idle_timeout)
+            .pool_max_idle_per_host(self.config.pool_max_idle_per_host)
+            .proxy(proxy)
+            .build()
+            .map_err(|e| {
+                error!("Failed to create HTTP client with proxy: {}", e);
+                ErrorBadRequest(e.to_string())
+            })
     }
 }
 
@@ -90,34 +95,22 @@ pub struct ProxyTarget {
 
 #[derive(Debug, Error)]
 pub enum ProxyError {
-    #[error("Missing X-Proxy-To header")]
-    MissingHeader,
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 
-    #[error("Invalid proxy URL: {0}")]
-    InvalidUrl(String),
+    #[error("Gateway error: {0}")]
+    Gateway(String),
 
-    #[error("Failed to parse proxy URL: {0}")]
-    UrlParseError(#[from] url::ParseError),
-
-    #[error("Request timeout after {0:?}")]
-    Timeout(Duration),
-
-    #[error("Failed to forward request: {0}")]
-    RequestError(String),
-
-    #[error("Failed to create HTTP client: {0}")]
-    ClientError(String),
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 impl ResponseError for ProxyError {
     fn status_code(&self) -> StatusCode {
         match self {
-            ProxyError::MissingHeader => StatusCode::BAD_REQUEST,
-            ProxyError::InvalidUrl(_) => StatusCode::BAD_REQUEST,
-            ProxyError::UrlParseError(_) => StatusCode::BAD_REQUEST,
-            ProxyError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            ProxyError::RequestError(_) => StatusCode::BAD_GATEWAY,
-            ProxyError::ClientError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ProxyError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ProxyError::Gateway(_) => StatusCode::BAD_GATEWAY,
+            ProxyError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
@@ -145,22 +138,27 @@ impl Stream for StreamingBody {
 }
 
 impl ProxyTarget {
+    pub fn from_connect(_req: &HttpRequest) -> Result<Self, ActixError> {
+        Ok(Self {
+            url: Url::parse("http://localhost").unwrap(), // Dummy URL for CONNECT phase
+            timeout: Duration::from_secs(30),
+        })
+    }
+
     pub fn from_header(header_value: Option<&str>, timeout: Duration) -> Result<Self, ActixError> {
         let header_value = header_value.ok_or_else(|| {
             error!("X-Proxy-To header is missing");
-            ProxyError::MissingHeader
+            ErrorBadRequest("Missing X-Proxy-To header")
         })?;
 
         let url = Url::parse(header_value).map_err(|e| {
             error!("Failed to parse proxy URL: {}", e);
-            ProxyError::UrlParseError(e)
+            ErrorBadRequest(format!("Invalid proxy URL: {}", e))
         })?;
 
         if !url.scheme().starts_with("http") {
             error!("Invalid URL scheme: {}", url.scheme());
-            return Err(
-                ProxyError::InvalidUrl("URL scheme must be http or https".to_string()).into(),
-            );
+            return Err(ErrorBadRequest("URL scheme must be http or https"));
         }
 
         Ok(Self { url, timeout })
@@ -176,15 +174,28 @@ impl ProxyTarget {
         proxy_client.metrics.record_request();
 
         let method = req.method().clone();
-        let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("");
-        let query = req.uri().query().unwrap_or("");
-        let target_url = if query.is_empty() {
-            format!("{}{}", self.url, path)
-        } else {
-            format!("{}{}?{}", self.url, path, query)
-        };
 
-        let mut client_req = proxy_client.client.request(method.clone(), &target_url);
+        // Handle CONNECT method differently
+        if method == reqwest::Method::CONNECT {
+            let uri = req.uri();
+            let authority = uri.authority()
+                .ok_or_else(|| ErrorBadRequest("No authority in CONNECT request"))?;
+
+            // For CONNECT requests, we just return a 200 OK to establish the tunnel
+            info!("Establishing CONNECT tunnel to: {}", authority);
+            
+            let mut builder = HttpResponse::Ok();
+            builder.insert_header(("Proxy-Connection", "Keep-Alive"));
+            return Ok(builder.finish());
+        }
+
+        // For non-CONNECT requests, we need the X-Proxy-To header
+        // Create a new client with the proxy configuration
+        let client = proxy_client.create_client_with_proxy(self.url.as_str())?;
+
+        // For non-CONNECT requests
+        let uri = req.uri().to_string();
+        let mut client_req = client.request(method.clone(), uri);
 
         // Forward headers
         for (key, value) in req.headers() {
@@ -201,11 +212,11 @@ impl ProxyTarget {
             Ok(resp) => resp,
             Err(e) if e.is_timeout() => {
                 error!("Request timed out after {} seconds", self.timeout.as_secs());
-                return Err(ProxyError::Timeout(self.timeout).into());
+                return Err(ErrorBadRequest(format!("Request timeout after {:?}", self.timeout)));
             }
             Err(e) => {
                 error!("Failed to forward request: {}", e);
-                return Err(ProxyError::RequestError(e.to_string()).into());
+                return Err(ErrorBadRequest(format!("Failed to forward request: {}", e)));
             }
         };
 
@@ -249,7 +260,6 @@ impl ProxyTarget {
 }
 
 fn should_skip_header(header_name: &HeaderName) -> bool {
-    // List of headers that should not be forwarded
     const SKIP_HEADERS: [&str; 6] = [
         "connection",
         "keep-alive",
@@ -309,8 +319,14 @@ mod tests {
     #[test]
     fn test_should_skip_header() {
         assert!(should_skip_header(&HeaderName::from_static("connection")));
-        assert!(should_skip_header(&HeaderName::from_static("proxy-authenticate")));
-        assert!(!should_skip_header(&HeaderName::from_str("content-type").unwrap()));
-        assert!(!should_skip_header(&HeaderName::from_str("authorization").unwrap()));
+        assert!(should_skip_header(&HeaderName::from_static(
+            "proxy-authenticate"
+        )));
+        assert!(!should_skip_header(
+            &HeaderName::from_str("content-type").unwrap()
+        ));
+        assert!(!should_skip_header(
+            &HeaderName::from_str("authorization").unwrap()
+        ));
     }
 }

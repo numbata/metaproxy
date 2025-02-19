@@ -1,50 +1,50 @@
-use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
-use futures::StreamExt;
-use std::env;
-use std::time::Duration;
-use tracing::{info, Level};
+use actix_web::{
+    error::{Error as ActixError, ErrorBadRequest},
+    web, App, HttpRequest, HttpResponse, HttpServer,
+};
+use std::{env, time::Duration};
+use tracing::info;
 
 mod health;
 mod proxy;
-use health::{health_check, HealthMetrics};
-use proxy::{ProxyClient, ProxyConfig, ProxyTarget};
+
+use crate::{
+    health::{health_check, HealthMetrics},
+    proxy::{ProxyClient, ProxyConfig, ProxyTarget},
+};
 
 async fn handle_request(
     req: HttpRequest,
-    mut payload: web::Payload,
+    body: web::Bytes,
     proxy_client: web::Data<ProxyClient>,
-) -> Result<HttpResponse, actix_web::Error> {
-    const PROXY_HEADER: &str = "x-proxy-to";
-
-    // Extract and validate the X-Proxy-To header
-    let proxy_target = ProxyTarget::from_header(
-        req.headers()
-            .get(PROXY_HEADER)
-            .and_then(|h| h.to_str().ok()),
-        proxy_client.config.request_timeout,
-    )?;
-
-    // Collect the request body
-    let mut body = Vec::new();
-    while let Some(chunk) = payload.next().await {
-        body.extend_from_slice(&chunk?);
+) -> Result<HttpResponse, ActixError> {
+    // For CONNECT requests, we don't need the X-Proxy-To header
+    let method = req.method();
+    if method == "CONNECT" {
+        let target = ProxyTarget::from_connect(&req)?;
+        return target
+            .forward_request(req, body.to_vec(), &proxy_client)
+            .await;
     }
 
-    // Forward the request to the target
-    proxy_target.forward_request(req, body, &proxy_client).await
-}
+    // For non-CONNECT requests, we need the X-Proxy-To header
+    let proxy_to = req
+        .headers()
+        .get("X-Proxy-To")
+        .ok_or_else(|| ErrorBadRequest("Missing X-Proxy-To header"))?
+        .to_str()
+        .map_err(|_| ErrorBadRequest("Invalid X-Proxy-To header"))?;
 
-fn get_env_var_or<T: std::str::FromStr>(key: &str, default: T) -> T {
-    env::var(key)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    let target = ProxyTarget::from_header(Some(proxy_to), Duration::from_secs(30))?;
+    target
+        .forward_request(req, body.to_vec(), &proxy_client)
+        .await
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize logging with the subscriber
-    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
+    // Initialize logging
+    tracing_subscriber::fmt::init();
 
     // Read configuration from environment
     let config = ProxyConfig {
@@ -67,17 +67,13 @@ async fn main() -> std::io::Result<()> {
         config.pool_max_idle_per_host
     );
 
-    // Create health metrics
     let metrics = web::Data::new(HealthMetrics::default());
-
-    // Create the proxy client with connection pooling
     let proxy_client = web::Data::new(
         ProxyClient::new(config.clone(), metrics.clone())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
     );
 
-    let bind_addr = format!("{}:{}", config.bind_host, config.bind_port);
-
+    let bind_addr = (config.bind_host.as_str(), config.bind_port);
     HttpServer::new(move || {
         App::new()
             .app_data(proxy_client.clone())
@@ -88,4 +84,14 @@ async fn main() -> std::io::Result<()> {
     .bind(bind_addr)?
     .run()
     .await
+}
+
+fn get_env_var_or<T>(name: &str, default: T) -> T
+where
+    T: std::str::FromStr,
+{
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }

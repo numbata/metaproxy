@@ -1,4 +1,4 @@
-use actix_web::{HttpResponse, web};
+use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -119,8 +119,9 @@ mod tests {
         let app = test::init_service(
             App::new()
                 .app_data(metrics.clone())
-                .route("/health", web::get().to(health_check))
-        ).await;
+                .route("/health", web::get().to(health_check)),
+        )
+        .await;
 
         // Send request
         let req = test::TestRequest::get().uri("/health").to_request();
@@ -130,9 +131,8 @@ mod tests {
 
         // Verify response body
         let body = test::read_body(resp).await;
-        let status = serde_json::from_str::<HealthStatus>(
-            std::str::from_utf8(&body).unwrap()
-        ).unwrap();
+        let status =
+            serde_json::from_str::<HealthStatus>(std::str::from_utf8(&body).unwrap()).unwrap();
 
         assert_eq!(status.status, "healthy");
         assert_eq!(status.requests_total, 2);
