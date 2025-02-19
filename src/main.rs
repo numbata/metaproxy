@@ -1,4 +1,5 @@
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer};
+use futures::StreamExt;
 use tracing::{info, Level};
 
 mod proxy;
@@ -13,15 +14,24 @@ async fn health_check() -> HttpResponse {
         }))
 }
 
-async fn handle_request(req: HttpRequest, body: web::Bytes) -> Result<HttpResponse, actix_web::Error> {
+async fn handle_request(
+    req: HttpRequest,
+    mut payload: web::Payload,
+) -> Result<HttpResponse, actix_web::Error> {
     const PROXY_HEADER: &str = "x-proxy-to";
-    
+
     // Extract and validate the X-Proxy-To header
     let proxy_target = ProxyTarget::from_header(
         req.headers()
             .get(PROXY_HEADER)
-            .and_then(|h| h.to_str().ok())
+            .and_then(|h| h.to_str().ok()),
     )?;
+
+    // Collect the request body
+    let mut body = Vec::new();
+    while let Some(chunk) = payload.next().await {
+        body.extend_from_slice(&chunk?);
+    }
 
     // Forward the request to the target
     proxy_target.forward_request(req, body).await
@@ -30,9 +40,7 @@ async fn handle_request(req: HttpRequest, body: web::Bytes) -> Result<HttpRespon
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize logging with the subscriber
-    tracing_subscriber::fmt()
-        .with_max_level(Level::INFO)
-        .init();
+    tracing_subscriber::fmt().with_max_level(Level::INFO).init();
 
     info!("Starting metaproxy server...");
 

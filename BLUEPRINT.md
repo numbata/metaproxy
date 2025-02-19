@@ -75,9 +75,9 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - Memory usage remains constant regardless of payload size.
 
 **Todo:**
-- [ ] Implement request body streaming.
-- [ ] Implement response body streaming.
-- [ ] Add proper error handling for stream interruptions.
+- [x] Implement request body streaming.
+- [x] Implement response body streaming.
+- [x] Add proper error handling for stream interruptions.
 
 ### **5. Optimize Connection Handling and Performance**
 **Goal:** Improve efficiency by reducing overhead and maximizing throughput.

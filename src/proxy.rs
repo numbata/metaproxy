@@ -1,12 +1,14 @@
-use actix_web::{
-    error::ErrorBadRequest,
-    http::{header::HeaderMap, StatusCode},
-    web, Error, HttpRequest, HttpResponse,
-};
+use actix_web::{error::ErrorBadRequest, http::StatusCode, Error, HttpRequest, HttpResponse};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
+use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
+use std::{
+    pin::Pin,
+    task::{Context, Poll},
+};
 use thiserror::Error;
+use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use url::Url;
 
@@ -27,6 +29,20 @@ pub struct ProxyTarget {
     pub url: Url,
     pub username: Option<String>,
     pub password: Option<String>,
+}
+
+#[pin_project]
+pub struct StreamingBody {
+    #[pin]
+    rx: mpsc::Receiver<Bytes>,
+}
+
+impl Stream for StreamingBody {
+    type Item = Result<Bytes, Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.project().rx.poll_recv(cx).map(|opt| opt.map(Ok))
+    }
 }
 
 impl ProxyTarget {
@@ -64,7 +80,7 @@ impl ProxyTarget {
     pub async fn forward_request(
         &self,
         req: HttpRequest,
-        body: web::Bytes,
+        body: Vec<u8>,
     ) -> Result<HttpResponse, Error> {
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
@@ -97,35 +113,51 @@ impl ProxyTarget {
 
         // Add body if present
         if !body.is_empty() {
-            proxy_req = proxy_req.body(body.to_vec());
+            proxy_req = proxy_req.body(body);
         }
 
-        // Send request
+        // Send request and handle response
         let response = proxy_req.send().await.map_err(|e| {
             error!("Failed to forward request: {}", e);
             ErrorBadRequest(ProxyError::RequestError(e))
         })?;
 
         let status = response.status();
+        let headers = response.headers().clone();
         info!("Received response with status: {}", status);
 
-        // Build response
+        // Create a channel for streaming the response body
+        let (tx, rx) = mpsc::channel(2);
+
+        // Spawn a task to stream the response body
+        tokio::spawn(async move {
+            let mut stream = response.bytes_stream();
+            while let Some(chunk) = stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        if tx.send(bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("Error streaming response: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        // Build response with streaming body
         let mut builder = HttpResponse::build(StatusCode::from_u16(status.as_u16()).unwrap());
 
         // Forward response headers
-        for (key, value) in response.headers() {
+        for (key, value) in headers.iter() {
             if !should_skip_header(key.as_str()) {
                 builder.insert_header((key.as_str(), value));
             }
         }
 
-        // Stream response body
-        Ok(builder.streaming(response.bytes_stream().map(|result| {
-            result.map_err(|e| {
-                error!("Error streaming response: {}", e);
-                actix_web::error::ErrorInternalServerError(e)
-            })
-        })))
+        Ok(builder.streaming(StreamingBody { rx }))
     }
 }
 
