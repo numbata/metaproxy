@@ -8,6 +8,10 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: write
+  packages: read
+
 jobs:
   prepare-release:
     runs-on: ubuntu-latest
@@ -30,3 +34,36 @@ jobs:
           git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
           git push
           git push --tags
+
+  build:
+    needs: prepare-release
+    uses: ./.github/workflows/build.yml
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: "v${{ github.event.inputs.version }}"
+          tag_name: "v${{ github.event.inputs.version }}"
+          draft: false
+          prerelease: false
+          files: |
+            */metaproxy-*.tar.gz
+          body: |
+            Release v${{ github.event.inputs.version }}
+            
+            Included binaries:
+            - Linux (x86_64)
+            - macOS (x86_64)
+            - macOS (ARM64)
