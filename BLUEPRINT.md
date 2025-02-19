@@ -36,9 +36,9 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - All dependencies are correctly integrated.
 
 **Todo:**
-- [ ] Initialize Rust project with `cargo new proxy-server`.
-- [ ] Add dependencies (`actix-web`, `reqwest`, `tokio`, `serde`, `tracing`).
-- [ ] Set up a basic **Actix-Web** server with a `/health` endpoint.
+- [x] Initialize Rust project with `cargo new proxy-server`.
+- [x] Add dependencies (`actix-web`, `reqwest`, `tokio`, `serde`, `tracing`).
+- [x] Set up a basic **Actix-Web** server with a `/health` endpoint.
 
 ### **2. Extract and Validate `X-Proxy-To` Header**
 **Goal:** Ensure incoming requests contain a valid `X-Proxy-To` header.
@@ -49,9 +49,9 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - Invalid values return appropriate error responses.
 
 **Todo:**
-- [ ] Extract `X-Proxy-To` from incoming requests.
-- [ ] Validate that the header contains a valid URL or IP.
-- [ ] Return an error response if validation fails.
+- [x] Extract `X-Proxy-To` from incoming requests.
+- [x] Validate that the header contains a valid URL or IP.
+- [x] Return an error response if validation fails.
 
 ### **3. Implement Basic Request Forwarding**
 **Goal:** Forward requests to the upstream proxy specified in `X-Proxy-To`.
@@ -150,4 +150,3 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - Implement **logging hooks** (e.g., `tracing`).
 - Ensure **containerization** for deployment.
 - Commit changes to git repo after each step
-
