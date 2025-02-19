@@ -5,7 +5,7 @@ edition = "2021"
 description = "High-performance HTTP/HTTPS proxy server using Actix-Web"
 
 [dependencies]
-actix-web = "4.4"
+actix-web = "4"
 reqwest = { version = "0.11", features = ["json", "stream", "rustls-tls"] }
 tokio = { version = "1.36", features = ["full"] }
 tokio-stream = "0.1"
@@ -13,9 +13,9 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url = { version = "2.5", features = ["serde"] }
+url = { version = "2", features = ["serde"] }
 thiserror = "1.0"
 futures = "0.3"
 bytes = "1.5"
 env_logger = "0.11"
-pin-project = "1.1"
+pin-project = "1.0"
