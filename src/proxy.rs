@@ -246,6 +246,34 @@ impl ProxyTarget {
     }
 }
 
+pub async fn handle_request(
+    req: HttpRequest,
+    body: web::Bytes,
+    proxy_client: web::Data<ProxyClient>,
+) -> Result<HttpResponse, ActixError> {
+    // For CONNECT requests, we don't need the X-Proxy-To header
+    let method = req.method();
+    if method == "CONNECT" {
+        let target = ProxyTarget::from_connect(&req)?;
+        return target
+            .forward_request(req, body.to_vec(), &proxy_client)
+            .await;
+    }
+
+    // For non-CONNECT requests, we need the X-Proxy-To header
+    let proxy_to = req
+        .headers()
+        .get("X-Proxy-To")
+        .ok_or_else(|| ErrorBadRequest("Missing X-Proxy-To header"))?
+        .to_str()
+        .map_err(|_| ErrorBadRequest("Invalid X-Proxy-To header"))?;
+
+    let target = ProxyTarget::from_header(Some(proxy_to), Duration::from_secs(30))?;
+    target
+        .forward_request(req, body.to_vec(), &proxy_client)
+        .await
+}
+
 fn should_skip_header(header_name: &HeaderName) -> bool {
     const SKIP_HEADERS: [&str; 6] = [
         "connection",

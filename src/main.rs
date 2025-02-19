@@ -1,51 +1,27 @@
-use actix_web::{
-    error::{Error as ActixError, ErrorBadRequest},
-    web, App, HttpRequest, HttpResponse, HttpServer,
-};
 use std::{env, time::Duration};
+use actix_web::{web, App, HttpServer};
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
+
+use crate::{
+    health::{health_check, HealthMetrics},
+    proxy::{ProxyClient, ProxyConfig},
+};
 
 mod health;
 mod proxy;
 
-use crate::{
-    health::{health_check, HealthMetrics},
-    proxy::{ProxyClient, ProxyConfig, ProxyTarget},
-};
-
-async fn handle_request(
-    req: HttpRequest,
-    body: web::Bytes,
-    proxy_client: web::Data<ProxyClient>,
-) -> Result<HttpResponse, ActixError> {
-    // For CONNECT requests, we don't need the X-Proxy-To header
-    let method = req.method();
-    if method == "CONNECT" {
-        let target = ProxyTarget::from_connect(&req)?;
-        return target
-            .forward_request(req, body.to_vec(), &proxy_client)
-            .await;
-    }
-
-    // For non-CONNECT requests, we need the X-Proxy-To header
-    let proxy_to = req
-        .headers()
-        .get("X-Proxy-To")
-        .ok_or_else(|| ErrorBadRequest("Missing X-Proxy-To header"))?
-        .to_str()
-        .map_err(|_| ErrorBadRequest("Invalid X-Proxy-To header"))?;
-
-    let target = ProxyTarget::from_header(Some(proxy_to), Duration::from_secs(30))?;
-    target
-        .forward_request(req, body.to_vec(), &proxy_client)
-        .await
+fn get_env_var_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     // Initialize tracing
-    let subscriber = FmtSubscriber::builder()
+    FmtSubscriber::builder()
         .with_max_level(Level::INFO)
         .with_target(false)
         .with_thread_ids(true)
@@ -55,9 +31,6 @@ async fn main() -> std::io::Result<()> {
         .with_ansi(true)
         .pretty()
         .init();
-
-    // Initialize logging
-    tracing_subscriber::fmt::init();
 
     // Read configuration from environment
     let config = ProxyConfig {
@@ -77,40 +50,27 @@ async fn main() -> std::io::Result<()> {
         "Starting MetaProxy server..."
     );
 
-    info!("Starting metaproxy server:");
-    info!(" - Bind address: {}:{}", config.bind_host, config.bind_port);
-    info!(" - Request timeout: {}s", config.request_timeout.as_secs());
-    info!(
-        " - Pool idle timeout: {}s",
-        config.pool_idle_timeout.as_secs()
-    );
-    info!(
-        " - Max idle connections per host: {}",
-        config.pool_max_idle_per_host
-    );
-
     let metrics = web::Data::new(HealthMetrics::default());
     let proxy_client = web::Data::new(
         ProxyClient::new(config.clone(), metrics.clone())
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?,
     );
 
-    let bind_addr = (config.bind_host.as_str(), config.bind_port);
-    HttpServer::new(move || {
+    let bind_addr = format!("http://{}:{}", config.bind_host, config.bind_port);
+    let config_data = web::Data::new(config.clone());
+
+    let server = HttpServer::new(move || {
         App::new()
             .app_data(proxy_client.clone())
             .app_data(metrics.clone())
+            .app_data(config_data.clone())
             .route("/health", web::get().to(health_check))
-            .default_service(web::to(handle_request))
+            .default_service(web::to(proxy::handle_request))
     })
-    .bind(bind_addr)?
-    .run()
-    .await
-}
+    .bind((config.bind_host, config.bind_port))?
+    .run();
 
-fn get_env_var_or<T: std::str::FromStr>(name: &str, default: T) -> T {
-    env::var(name)
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(default)
+    info!(address = %bind_addr, "🚀 MetaProxy is ready to accept connections");
+
+    server.await
 }
