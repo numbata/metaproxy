@@ -143,6 +143,31 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 
 ---
 
+## Configuration
+
+The proxy server can be configured using the following environment variables:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `PROXY_BIND_HOST` | Host address to bind the server to | `127.0.0.1` |
+| `PROXY_BIND_PORT` | Port number to listen on | `8081` |
+| `PROXY_REQUEST_TIMEOUT_SECS` | Timeout in seconds for upstream requests | `30` |
+
+### Examples
+
+```bash
+# Development: bind to localhost with default timeout
+PROXY_BIND_HOST=127.0.0.1 PROXY_BIND_PORT=8081 cargo run
+
+# Testing: use custom port and longer timeout
+PROXY_BIND_HOST=127.0.0.1 PROXY_BIND_PORT=3000 PROXY_REQUEST_TIMEOUT_SECS=60 cargo run
+
+# Production: bind to all interfaces
+PROXY_BIND_HOST=0.0.0.0 PROXY_BIND_PORT=80 PROXY_REQUEST_TIMEOUT_SECS=30 cargo run
+```
+
+---
+
 ## **Notes for LLM Code Generators**
 - Use **`actix-web`** as the main framework.
 - Optimize for **async performance** (`tokio`, `reqwest` with `HttpClient` pooling).
