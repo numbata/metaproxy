@@ -22,7 +22,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use url::Url;
-use crate::health::{HealthMetrics, PoolStats};
+use crate::health::HealthMetrics;
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
@@ -59,13 +59,6 @@ impl ProxyClient {
         })
     }
 
-    pub fn get_pool_stats(&self) -> PoolStats {
-        PoolStats {
-            active_connections: 0,
-            idle_connections: 0,
-        }
-    }
-
     fn create_client_with_proxy(&self, proxy_url: &str) -> Result<Client, ActixError> {
         let proxy = Proxy::all(proxy_url)
             .map_err(|e| {
@@ -95,22 +88,14 @@ pub struct ProxyTarget {
 
 #[derive(Debug, Error)]
 pub enum ProxyError {
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-
-    #[error("Gateway error: {0}")]
-    Gateway(String),
-
-    #[error("Internal error: {0}")]
-    Internal(String),
+    #[error("Request error: {0}")]
+    RequestError(String),
 }
 
 impl ResponseError for ProxyError {
     fn status_code(&self) -> StatusCode {
         match self {
-            ProxyError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ProxyError::Gateway(_) => StatusCode::BAD_GATEWAY,
-            ProxyError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ProxyError::RequestError(_) => StatusCode::BAD_GATEWAY,
         }
     }
 
@@ -212,11 +197,11 @@ impl ProxyTarget {
             Ok(resp) => resp,
             Err(e) if e.is_timeout() => {
                 error!("Request timed out after {} seconds", self.timeout.as_secs());
-                return Err(ErrorBadRequest(format!("Request timeout after {:?}", self.timeout)));
+                return Err(ProxyError::RequestError(format!("Request timeout after {:?}", self.timeout)).into());
             }
             Err(e) => {
                 error!("Failed to forward request: {}", e);
-                return Err(ErrorBadRequest(format!("Failed to forward request: {}", e)));
+                return Err(ProxyError::RequestError(format!("Failed to forward request: {}", e)).into());
             }
         };
 
