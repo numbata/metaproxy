@@ -3,7 +3,8 @@ use actix_web::{
     web, App, HttpRequest, HttpResponse, HttpServer,
 };
 use std::{env, time::Duration};
-use tracing::info;
+use tracing::{info, Level};
+use tracing_subscriber::FmtSubscriber;
 
 mod health;
 mod proxy;
@@ -43,6 +44,18 @@ async fn handle_request(
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize tracing
+    let subscriber = FmtSubscriber::builder()
+        .with_max_level(Level::INFO)
+        .with_target(false)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .with_thread_names(true)
+        .with_ansi(true)
+        .pretty()
+        .init();
+
     // Initialize logging
     tracing_subscriber::fmt::init();
 
@@ -54,6 +67,15 @@ async fn main() -> std::io::Result<()> {
         pool_idle_timeout: Duration::from_secs(get_env_var_or("PROXY_POOL_IDLE_TIMEOUT_SECS", 90)),
         pool_max_idle_per_host: get_env_var_or("PROXY_POOL_MAX_IDLE_PER_HOST", 32),
     };
+
+    info!(
+        host = %config.bind_host,
+        port = config.bind_port,
+        timeout_secs = ?config.request_timeout.as_secs(),
+        pool_idle_timeout_secs = ?config.pool_idle_timeout.as_secs(),
+        pool_max_idle_per_host = config.pool_max_idle_per_host,
+        "Starting MetaProxy server..."
+    );
 
     info!("Starting metaproxy server:");
     info!(" - Bind address: {}:{}", config.bind_host, config.bind_port);
@@ -86,11 +108,8 @@ async fn main() -> std::io::Result<()> {
     .await
 }
 
-fn get_env_var_or<T>(name: &str, default: T) -> T
-where
-    T: std::str::FromStr,
-{
-    std::env::var(name)
+fn get_env_var_or<T: std::str::FromStr>(name: &str, default: T) -> T {
+    env::var(name)
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)

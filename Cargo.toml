@@ -16,7 +16,7 @@ serde_json = "1.0.111"
 thiserror = "1.0.56"
 tokio = { version = "1.35.1", features = ["full"] }
 tokio-stream = "0.1"
-tracing = "0.1.40"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 url = { version = "2.5.0", features = ["serde"] }
 base64 = "0.21.7"
