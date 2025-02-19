@@ -1,16 +1,13 @@
+use crate::health::HealthMetrics;
 use actix_web::{
     error::{Error as ActixError, ErrorBadRequest, ResponseError},
     http::StatusCode,
-    web,
-    HttpRequest, HttpResponse,
+    web, HttpRequest, HttpResponse,
 };
 use bytes::Bytes;
-use futures::{StreamExt, Stream};
+use futures::{Stream, StreamExt};
 use pin_project::pin_project;
-use reqwest::{
-    header::HeaderName,
-    Client, Proxy,
-};
+use reqwest::{header::HeaderName, Client, Proxy};
 use serde::{Deserialize, Serialize};
 use std::{
     pin::Pin,
@@ -22,7 +19,6 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use url::Url;
-use crate::health::HealthMetrics;
 
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
@@ -60,11 +56,10 @@ impl ProxyClient {
     }
 
     fn create_client_with_proxy(&self, proxy_url: &str) -> Result<Client, ActixError> {
-        let proxy = Proxy::all(proxy_url)
-            .map_err(|e| {
-                error!("Failed to create proxy: {}", e);
-                ErrorBadRequest(e.to_string())
-            })?;
+        let proxy = Proxy::all(proxy_url).map_err(|e| {
+            error!("Failed to create proxy: {}", e);
+            ErrorBadRequest(e.to_string())
+        })?;
 
         Client::builder()
             .danger_accept_invalid_certs(true)
@@ -163,12 +158,13 @@ impl ProxyTarget {
         // Handle CONNECT method differently
         if method == reqwest::Method::CONNECT {
             let uri = req.uri();
-            let authority = uri.authority()
+            let authority = uri
+                .authority()
                 .ok_or_else(|| ErrorBadRequest("No authority in CONNECT request"))?;
 
             // For CONNECT requests, we just return a 200 OK to establish the tunnel
             info!("Establishing CONNECT tunnel to: {}", authority);
-            
+
             let mut builder = HttpResponse::Ok();
             builder.insert_header(("Proxy-Connection", "Keep-Alive"));
             return Ok(builder.finish());
@@ -197,11 +193,17 @@ impl ProxyTarget {
             Ok(resp) => resp,
             Err(e) if e.is_timeout() => {
                 error!("Request timed out after {} seconds", self.timeout.as_secs());
-                return Err(ProxyError::RequestError(format!("Request timeout after {:?}", self.timeout)).into());
+                return Err(ProxyError::RequestError(format!(
+                    "Request timeout after {:?}",
+                    self.timeout
+                ))
+                .into());
             }
             Err(e) => {
                 error!("Failed to forward request: {}", e);
-                return Err(ProxyError::RequestError(format!("Failed to forward request: {}", e)).into());
+                return Err(
+                    ProxyError::RequestError(format!("Failed to forward request: {}", e)).into(),
+                );
             }
         };
 
