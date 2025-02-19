@@ -1,0 +1,28 @@
+# General Workspace Rules
+- Enforce Rust formatting using `cargo fmt`
+- Ensure Clippy checks pass before committing (`cargo clippy --all-targets --all-features -- -D warnings`)
+- Allow direct commits to `main` until CI is set up
+- Keep commit messages descriptive and meaningful
+
+# Project Structure
+- Source code should reside in `src/`
+- Integration tests should be placed in `tests/`
+- Configuration files must be inside the `config/` directory
+- Docker-related files should be in the `docker/` directory
+
+# Development Workflow
+- Use feature branches (`feature/*`) when collaborating
+- Ensure every significant change is tested before committing
+- Keep `README.md` updated with new functionality
+
+# Performance and Security
+- Use async programming (`tokio`) to maximize concurrency
+- Log sensitive data responsibly, avoiding credentials and user-related information
+- Use structured logging (`tracing`) instead of plain `println!`
+- Optimize memory usage, particularly when handling large payloads
+
+# Deployment and Containerization
+- The Docker image should follow multi-stage builds for efficiency
+- Minimize container size by using a lightweight Rust runtime
+- Ensure the containerized proxy runs with minimal overhead
+
