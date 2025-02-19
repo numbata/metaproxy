@@ -66,13 +66,24 @@ impl ProxyTarget {
         req: HttpRequest,
         body: web::Bytes,
     ) -> Result<HttpResponse, Error> {
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|e| {
+                error!("Failed to create HTTP client: {}", e);
+                ErrorBadRequest(ProxyError::RequestError(e))
+            })?;
+
         let method = req.method().clone();
         let path = req.uri().path_and_query().map(|p| p.as_str()).unwrap_or("");
+        let query = req.uri().query().unwrap_or("");
 
         // Construct target URL
-        let target_url = format!("{}{}", self.url.as_str().trim_end_matches('/'), path);
-        info!("Forwarding request to: {}", target_url);
+        let mut target_url = format!("{}{}", self.url.as_str().trim_end_matches('/'), path);
+        if !query.is_empty() {
+            target_url = format!("{}?{}", target_url, query);
+        }
+        info!("Forwarding {} request to: {}", method, target_url);
 
         // Build request
         let mut proxy_req = client.request(method.clone(), &target_url);
@@ -95,8 +106,11 @@ impl ProxyTarget {
             ErrorBadRequest(ProxyError::RequestError(e))
         })?;
 
+        let status = response.status();
+        info!("Received response with status: {}", status);
+
         // Build response
-        let mut builder = HttpResponse::build(StatusCode::from_u16(response.status().as_u16()).unwrap());
+        let mut builder = HttpResponse::build(StatusCode::from_u16(status.as_u16()).unwrap());
 
         // Forward response headers
         for (key, value) in response.headers() {
