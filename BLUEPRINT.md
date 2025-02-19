@@ -88,8 +88,8 @@ Develop a high-performance **HTTP/HTTPS proxy server** in **Rust** using **Actix
 - DNS resolution and retries improve reliability.
 
 **Todo:**
-- [ ] Implement **connection pooling** using `reqwest`.
-- [ ] Enable **streaming responses** to prevent memory overuse.
+- [x] Implement **connection pooling** using `reqwest`.
+- [x] Enable **streaming responses** to prevent memory overuse.
 - [ ] Set up **timeouts and retry mechanisms**.
 - [ ] Optimize **DNS resolution**.
 
@@ -194,3 +194,38 @@ The proxy server uses connection pooling to improve performance by:
 - Implement **logging hooks** (e.g., `tracing`).
 - Ensure **containerization** for deployment.
 - Commit changes to git repo after each step
+
+## Tasks and Progress
+
+### Core Functionality
+- [x] Basic HTTP proxy functionality
+- [x] HTTPS support with certificate validation
+- [x] Header forwarding and manipulation
+- [x] Request/Response streaming
+- [x] Error handling and logging
+
+### Performance Optimizations
+- [x] Connection pooling using `reqwest`
+- [x] Enable streaming responses to prevent memory overuse
+- [ ] Set up timeouts and retry mechanisms
+- [ ] Optimize DNS resolution
+- [ ] Load balancing support (future enhancement)
+
+### Security Features
+- [ ] Authentication middleware
+- [ ] Rate limiting
+- [ ] Request/Response validation
+- [ ] TLS configuration options
+
+### Monitoring and Observability
+- [ ] Prometheus metrics
+- [ ] Health check endpoints
+- [ ] Request tracing
+- [ ] Performance monitoring
+
+### Documentation and Testing
+- [ ] API documentation
+- [ ] Configuration guide
+- [ ] Load testing results
+- [ ] Integration tests
+- [ ] Benchmark suite
