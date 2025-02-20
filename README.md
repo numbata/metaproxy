@@ -81,6 +81,12 @@ curl http://localhost:8081/health
 
 This project was a fun experiment in AI-assisted development using WindSurf's Cascade. We used `BLUEPRINT.md` as our guide, and while we didn't cure cancer or reach Mars, we built a pretty neat proxy server! Check out the blueprint if you're curious about our journey.
 
+### Investigation Reports 🔍
+
+We maintain detailed investigation reports for complex issues and architectural decisions:
+
+- [CONNECT Proxy Investigation](docs/connect_proxy_investigation.md) - Detailed analysis of HTTPS CONNECT handling implementation challenges and proposed solutions.
+
 ### Local Development
 
 ```bash
