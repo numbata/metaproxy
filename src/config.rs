@@ -23,3 +23,33 @@ impl Config {
             .map_err(|e| format!("Invalid bind address format ({}): {}", self.bind, e).into())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_config() {
+        let config = Config {
+            bind: "127.0.0.1:8000".to_string(),
+        };
+        assert_eq!(config.bind, "127.0.0.1:8000");
+    }
+
+    #[test]
+    fn test_valid_bind_addr() {
+        let config = Config {
+            bind: "127.0.0.1:8000".to_string(),
+        };
+        let addr = config.get_bind_addr().unwrap();
+        assert_eq!(addr.to_string(), "127.0.0.1:8000");
+    }
+
+    #[test]
+    fn test_invalid_bind_addr() {
+        let config = Config {
+            bind: "invalid:address".to_string(),
+        };
+        assert!(config.get_bind_addr().is_err());
+    }
+}
