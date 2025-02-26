@@ -13,7 +13,7 @@ async fn test_health_endpoint() {
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
     
     // Create the API routes
-    let routes = api::create_routes(bindings.clone());
+    let routes = api::create_routes(bindings.clone(), None);
     
     // Test the health endpoint
     let resp = request()
@@ -36,7 +36,7 @@ async fn test_create_proxy_binding() {
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
     
     // Create the API routes
-    let routes = api::create_routes(bindings.clone());
+    let routes = api::create_routes(bindings.clone(), None);
     
     // Test creating a new proxy binding
     let resp = request()

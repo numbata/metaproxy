@@ -119,64 +119,59 @@ async fn handle_connections(listener: TcpListener, upstream: Arc<Mutex<String>>,
 /// # Returns
 ///
 /// A result indicating success or failure
-async fn handle_connection(client_stream: TcpStream, upstream_addr: String, request_timeout: Option<Duration>) -> Result<()> {
-    // Peek at the first bytes to determine if this is a CONNECT request
-    let mut peek_buf = [0u8; 8];
-    let n = client_stream.peek(&mut peek_buf).await?;
+async fn handle_connection(
+    mut client_stream: TcpStream,
+    upstream_addr: String,
+    request_timeout: Option<Duration>,
+) -> Result<()> {
+    // Buffer to read the initial request
+    let mut buf = [0u8; 4096];
     
-    if n >= 7 && &peek_buf[..7] == b"CONNECT" {
-        // This is a CONNECT request (HTTPS tunneling)
+    // Read the initial data from the client
+    let n = match client_stream.read(&mut buf).await {
+        Ok(n) if n == 0 => return Err(Error::Custom("Client closed connection".to_string())),
+        Ok(n) => n,
+        Err(e) => return Err(Error::from(e)),
+    };
+    
+    // Check if this is a CONNECT request (HTTPS)
+    if n >= 7 && &buf[..7] == b"CONNECT" {
+        debug!("CONNECT request detected, handling as HTTPS");
+        // Extract the target from the CONNECT request
+        let request_str = std::str::from_utf8(&buf[..n])
+            .map_err(|_| Error::Custom("Invalid UTF-8 in CONNECT request".to_string()))?;
+        
+        // Parse the CONNECT request to extract the target host:port
+        let lines: Vec<&str> = request_str.split("\r\n").collect();
+        if lines.is_empty() {
+            return Err(Error::Custom("Empty CONNECT request".to_string()));
+        }
+        
+        let connect_line = lines[0];
+        let parts: Vec<&str> = connect_line.split_whitespace().collect();
+        if parts.len() < 2 {
+            return Err(Error::Custom("Invalid CONNECT request format".to_string()));
+        }
+        
+        let target = parts[1];
+        debug!("CONNECT request for {}", target);
+        
+        // Send 200 Connection Established to the client
+        let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
+        client_stream.write_all(response.as_bytes()).await?;
+        
+        // Handle the CONNECT tunnel
         handle_connect(client_stream, &upstream_addr, request_timeout).await
     } else {
-        // This is a standard HTTP request
+        debug!("HTTP request detected");
+        // This is a regular HTTP request
+        // Create a buffer with the data we've already read
+        let mut buffer = Vec::new();
+        buffer.extend_from_slice(&buf[..n]);
+        
+        // Handle the HTTP request
         handle_http_request(client_stream, &upstream_addr, request_timeout).await
     }
-}
-
-/// Adjust request headers for forwarding to the upstream server
-///
-/// This function modifies the request headers to be suitable for forwarding
-/// to the upstream server, removing proxy-specific headers and adjusting
-/// the Host header if needed.
-///
-/// # Arguments
-///
-/// * `header_bytes` - The raw HTTP request header bytes
-///
-/// # Returns
-///
-/// A result containing the adjusted header bytes
-fn adjust_request_headers(header_bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = httparse::Request::new(&mut headers);
-    
-    // Parse the HTTP request header.
-    let status = req.parse(header_bytes)?;
-    
-    if !status.is_complete() {
-        return Err(Error::Custom("Incomplete HTTP request".to_string()));
-    }
-    
-    // Extract the method, path, and version.
-    let method = req.method.ok_or_else(|| Error::Custom("Missing method".to_string()))?;
-    let path = req.path.ok_or_else(|| Error::Custom("Missing path".to_string()))?;
-    let version = req.version.ok_or_else(|| Error::Custom("Missing version".to_string()))?;
-    
-    // Build a new request header.
-    let mut new_header = format!("{} {} HTTP/1.{}\r\n", method, path, version);
-    
-    // Add headers, excluding proxy-specific ones.
-    for header in req.headers.iter() {
-        let name = header.name.to_lowercase();
-        if name != "proxy-connection" && name != "connection" {
-            new_header.push_str(&format!("{}: {}\r\n", header.name, std::str::from_utf8(header.value).map_err(|_| Error::Custom("Invalid header value".to_string()))?));
-        }
-    }
-    
-    // Add Connection: close header.
-    new_header.push_str("Connection: close\r\n\r\n");
-    
-    Ok(new_header.into_bytes())
 }
 
 /// Handle a CONNECT request for HTTPS tunneling
