@@ -1,20 +1,31 @@
+/*!
+ * # Error Handling Module
+ *
+ * This module defines custom error types and handling for the metaproxy application.
+ * It provides a unified error type that can be used throughout the application,
+ * with conversions from common error types.
+ */
+
 use std::error::Error as StdError;
 use std::fmt;
 use std::io;
 use warp::reject::Reject;
 
 /// Custom error type for the metaproxy application
+///
+/// This enum represents all possible errors that can occur in the metaproxy application.
+/// It implements the standard Error trait and provides conversions from common error types.
 #[derive(Debug)]
 pub enum Error {
-    /// IO errors
+    /// IO errors from the standard library
     Io(io::Error),
-    /// HTTP parsing errors
+    /// HTTP parsing errors from the httparse crate
     HttpParse(httparse::Error),
-    /// URL parsing errors
+    /// URL parsing errors from the url crate
     UrlParse(url::ParseError),
-    /// JSON serialization/deserialization errors
+    /// JSON serialization/deserialization errors from serde_json
     Json(serde_json::Error),
-    /// Custom error with a message
+    /// Custom error with a message string
     Custom(String),
 }
 
@@ -42,36 +53,42 @@ impl StdError for Error {
     }
 }
 
+/// Convert from io::Error to our custom Error type
 impl From<io::Error> for Error {
     fn from(err: io::Error) -> Self {
         Error::Io(err)
     }
 }
 
+/// Convert from httparse::Error to our custom Error type
 impl From<httparse::Error> for Error {
     fn from(err: httparse::Error) -> Self {
         Error::HttpParse(err)
     }
 }
 
+/// Convert from url::ParseError to our custom Error type
 impl From<url::ParseError> for Error {
     fn from(err: url::ParseError) -> Self {
         Error::UrlParse(err)
     }
 }
 
+/// Convert from serde_json::Error to our custom Error type
 impl From<serde_json::Error> for Error {
     fn from(err: serde_json::Error) -> Self {
         Error::Json(err)
     }
 }
 
+/// Convert from &str to our custom Error type
 impl From<&str> for Error {
     fn from(msg: &str) -> Self {
         Error::Custom(msg.to_string())
     }
 }
 
+/// Convert from String to our custom Error type
 impl From<String> for Error {
     fn from(msg: String) -> Self {
         Error::Custom(msg)
@@ -79,12 +96,17 @@ impl From<String> for Error {
 }
 
 /// Custom rejection type for warp
+///
+/// This type is used to convert our custom Error type into a warp::Rejection,
+/// which can be used in warp filters.
 #[derive(Debug)]
 pub struct CustomRejection(pub Error);
 
 impl Reject for CustomRejection {}
 
 /// Result type alias using our custom Error
+///
+/// This type alias makes it easier to use our custom Error type throughout the application.
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]

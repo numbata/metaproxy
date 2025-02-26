@@ -1,3 +1,16 @@
+/*!
+ * # Proxy Module
+ *
+ * This module provides the core proxy functionality for the metaproxy application.
+ * It handles TCP connections, HTTP/HTTPS proxying, and connection tunneling.
+ *
+ * The proxy module supports:
+ * - Standard HTTP proxying with header adjustment
+ * - HTTPS tunneling via the CONNECT method
+ * - Dynamic upstream configuration
+ * - Graceful shutdown of proxy listeners
+ */
+
 use std::{
     collections::HashMap,
     sync::Arc,
@@ -12,18 +25,40 @@ use crate::error::{Result, Error};
 
 /// A structure representing a proxy binding on a given port,
 /// along with its upstream proxy configuration.
+///
+/// This struct contains all the information needed to manage a proxy binding,
+/// including the port it's bound to, the upstream server address, and a
+/// channel for signaling shutdown.
 pub struct ProxyBinding {
+    /// The port number this proxy binding is listening on
     pub port: u16,
-    // The upstream proxy address wrapped in a Mutex for dynamic updates.
+    /// The upstream proxy address wrapped in a Mutex for dynamic updates
     pub upstream: Arc<Mutex<String>>,
-    // Used to signal the listener to shut down.
+    /// Used to signal the listener to shut down
     pub shutdown_tx: oneshot::Sender<()>,
 }
 
 /// Shared type for dynamic proxy bindings.
+///
+/// This type alias represents a thread-safe map of port numbers to proxy bindings,
+/// allowing multiple threads to safely access and modify the proxy bindings.
 pub type BindingMap = Arc<Mutex<HashMap<u16, ProxyBinding>>>;
 
 /// Spawns a proxy listener on the given port which routes connections to its configured upstream.
+///
+/// This function creates a TCP listener on the specified port and handles incoming connections
+/// by forwarding them to the configured upstream server. It continues to accept connections
+/// until a shutdown signal is received.
+///
+/// # Arguments
+///
+/// * `port` - The port number to bind the proxy listener to
+/// * `upstream` - The upstream server address, wrapped in a Mutex for dynamic updates
+/// * `shutdown_rx` - A oneshot channel receiver for signaling shutdown
+///
+/// # Returns
+///
+/// A `Result` indicating success or an error if the listener fails to bind or accept connections
 pub async fn spawn_proxy_listener(
     port: u16,
     upstream: Arc<Mutex<String>>,
@@ -62,7 +97,18 @@ pub async fn spawn_proxy_listener(
 }
 
 /// Adjusts the request headers for forwarding to the upstream proxy.
-/// This includes removing the "Proxy-Connection" header and updating the "Connection" header.
+///
+/// This function modifies HTTP request headers to make them suitable for forwarding
+/// to an upstream proxy. It removes the "Proxy-Connection" header and updates
+/// the "Connection" header to maintain proper HTTP semantics.
+///
+/// # Arguments
+///
+/// * `header_bytes` - The original HTTP request headers as bytes
+///
+/// # Returns
+///
+/// A `Result` containing the modified headers as bytes, or an error if parsing fails
 fn adjust_request_headers(header_bytes: &[u8]) -> Result<Vec<u8>> {
     // Convert header bytes to a string (assuming valid UTF-8).
     let header_str = std::str::from_utf8(header_bytes)
@@ -91,8 +137,20 @@ fn adjust_request_headers(header_bytes: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Injects a "Proxy-Authorization: Basic ..." header into the CONNECT header.
-/// It inserts the new header before the final blank line.
-pub fn inject_proxy_auth(header_bytes: &[u8], encoded: &str) -> Vec<u8> {
+///
+/// This function adds a Proxy-Authorization header to the HTTP request headers
+/// for authenticating with an upstream proxy. It inserts the new header before
+/// the final blank line of the headers.
+///
+/// # Arguments
+///
+/// * `header_bytes` - The original HTTP request headers as bytes
+/// * `encoded` - The Base64-encoded credentials for proxy authentication
+///
+/// # Returns
+///
+/// The modified headers as bytes with the added Proxy-Authorization header
+fn inject_proxy_auth(header_bytes: &[u8], encoded: &str) -> Vec<u8> {
     // Convert header bytes to a string (assuming valid UTF-8).
     let header_str = std::str::from_utf8(header_bytes).unwrap();
     // Split the header into lines.
@@ -113,9 +171,21 @@ pub fn inject_proxy_auth(header_bytes: &[u8], encoded: &str) -> Vec<u8> {
 }
 
 /// Handles a client connection, determining whether it is a CONNECT (HTTPS) request or a standard HTTP request.
-/// For CONNECT requests, it tunnels data after relaying the upstream's response.
-/// For other requests, it adjusts headers before forwarding.
-pub async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) -> Result<()> {
+///
+/// This function processes an incoming TCP connection and determines the appropriate
+/// handling based on the request type. For CONNECT requests (typically HTTPS), it
+/// establishes a tunnel between the client and the upstream server. For standard
+/// HTTP requests, it adjusts the headers and forwards the request to the upstream.
+///
+/// # Arguments
+///
+/// * `client_stream` - The TCP stream from the client connection
+/// * `upstream_addr` - The address of the upstream server to forward the request to
+///
+/// # Returns
+///
+/// A `Result` indicating success or an error if handling the connection fails
+async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) -> Result<()> {
     // Read the initial request header.
     let mut client_reader = BufReader::new(&mut client_stream);
     let mut header_bytes = Vec::new();

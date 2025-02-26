@@ -1,3 +1,11 @@
+/*!
+ * # API Module
+ *
+ * This module provides the REST API for managing proxy bindings.
+ * It defines routes for creating, updating, and deleting proxy bindings,
+ * as well as a health check endpoint.
+ */
+
 use std::convert::Infallible;
 use warp::{Filter, Reply, Rejection};
 use serde_json::{json, Value};
@@ -8,6 +16,17 @@ use tokio::sync::Mutex;
 use crate::error::{Error, CustomRejection};
 
 /// Create API routes for the proxy server
+///
+/// This function sets up all the API routes for the proxy server,
+/// including routes for managing proxy bindings and a health check endpoint.
+///
+/// # Arguments
+///
+/// * `bindings` - Shared state containing active proxy bindings
+///
+/// # Returns
+///
+/// A warp filter that handles all API routes
 pub fn create_routes(
     bindings: BindingMap,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -18,6 +37,17 @@ pub fn create_routes(
 }
 
 /// Create routes for managing proxy bindings
+///
+/// This function sets up routes for creating, updating, and deleting proxy bindings.
+/// It handles POST, PUT, and DELETE requests to the `/proxy` endpoint.
+///
+/// # Arguments
+///
+/// * `bindings` - Shared state containing active proxy bindings
+///
+/// # Returns
+///
+/// A warp filter that handles proxy binding management routes
 fn create_proxy_routes(
     bindings: BindingMap,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -57,6 +87,17 @@ fn create_proxy_routes(
 }
 
 /// Create health check route
+///
+/// This function sets up a route for checking the health of the proxy server.
+/// It returns information about the server status and active bindings.
+///
+/// # Arguments
+///
+/// * `bindings` - Shared state containing active proxy bindings
+///
+/// # Returns
+///
+/// A warp filter that handles health check requests
 fn create_health_route(
     bindings: BindingMap,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
@@ -69,6 +110,20 @@ fn create_health_route(
 }
 
 /// Handle proxy binding management requests
+///
+/// This function handles requests for creating, updating, and deleting proxy bindings.
+/// It processes the request based on the HTTP method and updates the shared state accordingly.
+///
+/// # Arguments
+///
+/// * `port` - The port number for the proxy binding (0 for POST requests)
+/// * `method` - The HTTP method (POST, PUT, or DELETE)
+/// * `body` - The request body as JSON
+/// * `bindings` - Shared state containing active proxy bindings
+///
+/// # Returns
+///
+/// A result containing a JSON response or a rejection
 async fn handle_proxy_request(
     port: u16,
     method: warp::http::Method,
@@ -192,6 +247,17 @@ async fn handle_proxy_request(
 }
 
 /// Handle health check requests
+///
+/// This function handles requests to the health check endpoint.
+/// It returns information about the server status and active bindings.
+///
+/// # Arguments
+///
+/// * `bindings` - Shared state containing active proxy bindings
+///
+/// # Returns
+///
+/// A result containing a JSON response
 async fn handle_health_request(
     bindings: BindingMap,
 ) -> std::result::Result<impl Reply, Infallible> {
