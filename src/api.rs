@@ -7,6 +7,7 @@
  */
 
 use std::convert::Infallible;
+use std::time::Duration;
 use warp::{Filter, Reply, Rejection};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
@@ -24,14 +25,16 @@ use crate::error::{Error, CustomRejection};
 /// # Arguments
 ///
 /// * `bindings` - Shared state containing active proxy bindings
+/// * `timeout` - Optional request timeout for upstream connections
 ///
 /// # Returns
 ///
 /// A warp filter that handles all API routes
 pub fn create_routes(
     bindings: BindingMap,
+    timeout: Option<Duration>,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
-    let proxy_routes = create_proxy_routes(bindings.clone());
+    let proxy_routes = create_proxy_routes(bindings.clone(), timeout);
     let health_route = create_health_route(bindings.clone());
     
     proxy_routes.or(health_route)
@@ -45,46 +48,52 @@ pub fn create_routes(
 /// # Arguments
 ///
 /// * `bindings` - Shared state containing active proxy bindings
+/// * `timeout` - Optional request timeout for upstream connections
 ///
 /// # Returns
 ///
 /// A warp filter that handles proxy binding management routes
 fn create_proxy_routes(
     bindings: BindingMap,
+    timeout: Option<Duration>,
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let bindings_filter = warp::any().map(move || bindings.clone());
+    let timeout_clone = timeout.clone();
     
-    // Route for POST requests (create)
-    let post_route = warp::path("proxy")
+    // POST /proxy - Create a new proxy binding
+    let post = warp::path("proxy")
         .and(warp::post())
+        .and(warp::any().map(|| 0u16)) // No port in path for POST
         .and(warp::body::json())
         .and(bindings_filter.clone())
-        .and_then(|body: Value, bindings: BindingMap| {
-            handle_proxy_request(0, warp::http::Method::POST, body, bindings)
+        .and(warp::any().map(move || timeout_clone.clone()))
+        .and_then(|port, body, bindings, timeout| {
+            handle_proxy_request(port, warp::http::Method::POST, body, bindings, timeout)
         });
     
-    // Route for PUT requests (update)
-    let put_route = warp::path("proxy")
-        .and(warp::path::param::<u16>())
+    let timeout_clone = timeout.clone();
+    // PUT /proxy/{port} - Update an existing proxy binding
+    let put = warp::path!("proxy" / u16)
         .and(warp::put())
         .and(warp::body::json())
         .and(bindings_filter.clone())
-        .and_then(|port: u16, body: Value, bindings: BindingMap| {
-            handle_proxy_request(port, warp::http::Method::PUT, body, bindings)
+        .and(warp::any().map(move || timeout_clone.clone()))
+        .and_then(|port, body, bindings, timeout| {
+            handle_proxy_request(port, warp::http::Method::PUT, body, bindings, timeout)
         });
     
-    // Route for DELETE requests (delete) - no JSON body required
-    let delete_route = warp::path("proxy")
-        .and(warp::path::param::<u16>())
+    let timeout_clone = timeout.clone();
+    // DELETE /proxy/{port} - Delete an existing proxy binding
+    let delete = warp::path!("proxy" / u16)
         .and(warp::delete())
+        .and(warp::any().map(|| json!({}))) // Empty body for DELETE
         .and(bindings_filter.clone())
-        .and_then(|port: u16, bindings: BindingMap| {
-            // Pass an empty JSON object for the body
-            handle_proxy_request(port, warp::http::Method::DELETE, json!({}), bindings)
+        .and(warp::any().map(move || timeout_clone.clone()))
+        .and_then(|port, body, bindings, timeout| {
+            handle_proxy_request(port, warp::http::Method::DELETE, body, bindings, timeout)
         });
     
-    // Combine all routes
-    post_route.or(put_route).or(delete_route)
+    post.or(put).or(delete)
 }
 
 /// Create health check route
@@ -121,6 +130,7 @@ fn create_health_route(
 /// * `method` - The HTTP method (POST, PUT, or DELETE)
 /// * `body` - The request body as JSON
 /// * `bindings` - Shared state containing active proxy bindings
+/// * `timeout` - Optional request timeout for upstream connections
 ///
 /// # Returns
 ///
@@ -130,6 +140,7 @@ async fn handle_proxy_request(
     method: warp::http::Method,
     body: Value,
     bindings: BindingMap,
+    timeout: Option<Duration>,
 ) -> std::result::Result<impl Reply, Rejection> {
     match method {
         warp::http::Method::POST => {
@@ -160,8 +171,9 @@ async fn handle_proxy_request(
             
             // Spawn a new proxy listener.
             let upstream_clone = upstream_arc.clone();
+            let timeout_clone = timeout.clone();
             tokio::spawn(async move {
-                if let Err(e) = spawn_proxy_listener(new_port, upstream_clone, shutdown_rx).await {
+                if let Err(e) = spawn_proxy_listener(new_port, upstream_clone, shutdown_rx, timeout_clone).await {
                     error!("Error in proxy listener: {}", e);
                 }
             });
@@ -172,7 +184,7 @@ async fn handle_proxy_request(
                 upstream: upstream_arc,
                 shutdown_tx,
             });
-
+            
             debug!("Added binding for port {} to binding map", new_port);
 
             // Drop the lock before returning

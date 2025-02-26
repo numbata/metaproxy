@@ -10,6 +10,7 @@
  * - **CONNECT Tunneling**: Support for HTTPS tunneling via the CONNECT method
  * - **Modular Architecture**: Clean separation of concerns for better maintainability and testability
  * - **Async I/O**: Built on Tokio for high-performance asynchronous I/O
+ * - **Request Timeouts**: Configurable timeouts for upstream requests
  *
  * ## Modules
  *
@@ -65,13 +66,23 @@ use crate::proxy::BindingMap;
 /// ```
 pub async fn run(config: Config) -> Result<()> {
     info!("Starting proxy server on {}", config.bind);
+    
+    // Log the timeout configuration
+    if let Some(timeout) = config.get_request_timeout() {
+        info!("Request timeout set to {} seconds", timeout.as_secs());
+    } else {
+        info!("No request timeout configured");
+    }
 
     // Shared state to store active proxy bindings.
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
     info!("Initialized empty binding map");
 
+    // Store the timeout configuration for use in proxy handlers
+    let timeout = config.get_request_timeout();
+
     // Create API routes
-    let routes = create_routes(bindings.clone());
+    let routes = create_routes(bindings.clone(), timeout);
     info!("Created API routes");
 
     // Start the API server on the specified bind address.

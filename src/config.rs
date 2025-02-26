@@ -7,6 +7,7 @@
 
 use clap::Parser;
 use std::net::SocketAddr;
+use std::time::Duration;
 use crate::error::Result;
 
 /// Proxy server configuration
@@ -31,6 +32,14 @@ pub struct Config {
     /// The server will listen for incoming connections on this address.
     #[arg(long, default_value = "127.0.0.1:8000")]
     pub bind: String,
+
+    /// Request timeout in seconds
+    ///
+    /// If a request to the upstream server doesn't complete within this time,
+    /// it will be canceled and an error will be returned to the client.
+    /// Set to 0 for no timeout.
+    #[arg(long, default_value = "30")]
+    pub request_timeout: u64,
 }
 
 impl Config {
@@ -52,11 +61,25 @@ impl Config {
     ///
     /// # Returns
     ///
-    /// A `Result` containing either the parsed `SocketAddr` or an error
-    /// if the string could not be parsed.
+    /// A `Result` containing the parsed `SocketAddr` or an error if parsing fails
     pub fn get_bind_addr(&self) -> Result<SocketAddr> {
-        self.bind.parse()
-            .map_err(|e| format!("Invalid bind address format ({}): {}", self.bind, e).into())
+        self.bind.parse().map_err(|e| format!("Invalid bind address: {}", e).into())
+    }
+
+    /// Get the request timeout as a Duration
+    ///
+    /// This function converts the request_timeout value to a Duration.
+    /// If the timeout is 0, it returns None (no timeout).
+    ///
+    /// # Returns
+    ///
+    /// An Option containing the timeout Duration, or None if no timeout is set
+    pub fn get_request_timeout(&self) -> Option<Duration> {
+        if self.request_timeout == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(self.request_timeout))
+        }
     }
 }
 
@@ -68,14 +91,17 @@ mod tests {
     fn test_default_config() {
         let config = Config {
             bind: "127.0.0.1:8000".to_string(),
+            request_timeout: 30,
         };
         assert_eq!(config.bind, "127.0.0.1:8000");
+        assert_eq!(config.request_timeout, 30);
     }
 
     #[test]
     fn test_valid_bind_addr() {
         let config = Config {
             bind: "127.0.0.1:8000".to_string(),
+            request_timeout: 30,
         };
         let addr = config.get_bind_addr().unwrap();
         assert_eq!(addr.to_string(), "127.0.0.1:8000");
@@ -85,7 +111,27 @@ mod tests {
     fn test_invalid_bind_addr() {
         let config = Config {
             bind: "invalid:address".to_string(),
+            request_timeout: 30,
         };
         assert!(config.get_bind_addr().is_err());
+    }
+
+    #[test]
+    fn test_request_timeout() {
+        let config = Config {
+            bind: "127.0.0.1:8000".to_string(),
+            request_timeout: 30,
+        };
+        let timeout = config.get_request_timeout().unwrap();
+        assert_eq!(timeout.as_secs(), 30);
+    }
+
+    #[test]
+    fn test_no_request_timeout() {
+        let config = Config {
+            bind: "127.0.0.1:8000".to_string(),
+            request_timeout: 0,
+        };
+        assert!(config.get_request_timeout().is_none());
     }
 }

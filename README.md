@@ -11,6 +11,7 @@ A modular HTTP proxy server with dynamic binding configuration via a REST API.
 - **CONNECT Tunneling**: Support for HTTPS tunneling via the CONNECT method
 - **Modular Architecture**: Clean separation of concerns for better maintainability and testability
 - **Async I/O**: Built on Tokio for high-performance asynchronous I/O
+- **Request Timeouts**: Configurable timeouts for upstream connections to prevent hanging requests
 
 ## Installation
 
@@ -35,15 +36,26 @@ cargo build --release
 
 ## Usage
 
+```bash
+# Start the proxy server with default settings
+cargo run
+
+# Start the proxy server with a custom bind address
+cargo run -- --bind 0.0.0.0:8000
+
+# Start the proxy server with a custom request timeout (in seconds)
+cargo run -- --request-timeout 10
+
+# Disable request timeout (wait indefinitely)
+cargo run -- --request-timeout 0
+```
+
 ### Command Line Options
 
-```bash
-# Start the proxy server on the default address (127.0.0.1:8000)
-./target/release/metaproxy
-
-# Start the proxy server on a custom address
-./target/release/metaproxy --bind 0.0.0.0:8080
-```
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--bind` | Address to bind the proxy server to | `127.0.0.1:8000` |
+| `--request-timeout` | Timeout for upstream requests in seconds (0 for no timeout) | `30` |
 
 ### API Endpoints
 
@@ -154,6 +166,25 @@ curl -x http://127.0.0.1:9000 http://example.com
 
 # Use the proxy for HTTPS requests
 curl -x http://127.0.0.1:9000 https://example.com
+```
+
+## Request Timeouts
+
+Metaproxy includes configurable request timeouts for upstream connections. This helps prevent hanging connections and improves reliability when upstream servers are unresponsive.
+
+- **Global Timeout**: Set a global timeout for all proxy bindings using the `--request-timeout` command line option
+- **Automatic Cancellation**: Requests that exceed the timeout are automatically canceled with an appropriate error message
+- **Configurable**: Timeout can be set in seconds, or disabled completely by setting it to 0
+
+Example:
+```bash
+# Set a 5-second timeout for all requests
+cargo run -- --request-timeout 5
+```
+
+When a timeout occurs, the connection is terminated and an error is logged:
+```
+[2025-02-26T01:15:22Z WARN metaproxy::proxy] Connection to upstream timed out after 5 seconds: example.com:80
 ```
 
 ## Development
