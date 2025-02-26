@@ -5,21 +5,25 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    io::{copy_bidirectional, AsyncReadExt, AsyncWriteExt, BufReader, split},
+    io::{copy_bidirectional, AsyncWriteExt, BufReader},
     net::{TcpListener, TcpStream},
     io::AsyncBufReadExt,
     sync::{Mutex, oneshot},
 };
+use base64::Engine;
 use warp::Filter;
 use serde_json::json;
 use httparse;
 
-/// A structure representing a proxy binding on a given port,
-/// along with its upstream proxy configuration.
-#[derive(Clone)]
+// Define a custom error type for warp rejections.
+#[derive(Debug)]
+struct CustomError(String);
+impl warp::reject::Reject for CustomError {}
+
+// Define a proxy binding structure. We cannot derive Clone because oneshot::Sender is not Clone.
 struct ProxyBinding {
     port: u16,
-    // The upstream proxy address (e.g., "127.1.0.1:8080") wrapped in a Mutex for dynamic updates.
+    // The upstream proxy address wrapped in a Mutex for dynamic updates.
     upstream: Arc<Mutex<String>>,
     // Used to signal the listener to shut down.
     shutdown_tx: oneshot::Sender<()>,
@@ -37,10 +41,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let api_bindings = bindings.clone();
 
     // Define the API routes.
-    // - POST /proxy: Create a new binding.
-    // - PUT /proxy/{port}: Update the upstream for a binding.
-    // - DELETE /proxy/{port}: Delete a binding.
-    // - GET /health: Return the current bindings and upstream addresses.
+    // POST /proxy creates a new binding.
+    // PUT /proxy/{port} updates the upstream for a binding.
+    // DELETE /proxy/{port} deletes a binding.
+    // GET /health returns the current bindings and their upstream addresses.
     let proxy_routes = warp::path("proxy")
         .and(warp::path::param::<u16>().or(warp::any().map(|| 0)).unify())
         .and(warp::method())
@@ -50,18 +54,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
             async move {
                 match method {
                     warp::http::Method::POST => {
-                        // For creation, read the "port" and "upstream" from the request body.
+                        // For creation, extract "port" and "upstream" from the JSON body.
                         let new_port = body.get("port")
                             .and_then(|v| v.as_u64())
-                            .ok_or_else(|| warp::reject::custom("Missing port"))? as u16;
+                            .ok_or_else(|| warp::reject::custom(CustomError("Missing port".into())))? as u16;
                         let upstream = body.get("upstream")
                             .and_then(|v| v.as_str())
-                            .ok_or_else(|| warp::reject::custom("Missing upstream"))?
+                            .ok_or_else(|| warp::reject::custom(CustomError("Missing upstream".into())))?
                             .to_string();
 
                         let mut map = bindings.lock().await;
                         if map.contains_key(&new_port) {
-                            return Err(warp::reject::custom("Port already in use"));
+                            return Err(warp::reject::custom(CustomError("Port already in use".into())));
                         }
                         // Create a shutdown channel for the new binding.
                         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -80,11 +84,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     },
                     warp::http::Method::PUT => {
                         // Update the upstream for an existing binding.
-                        let mut map = bindings.lock().await;
+                        let  map = bindings.lock().await;
                         if let Some(binding) = map.get(&port) {
                             let new_upstream = body.get("upstream")
                                 .and_then(|v| v.as_str())
-                                .ok_or_else(|| warp::reject::custom("Missing upstream"))?
+                                .ok_or_else(|| warp::reject::custom(CustomError("Missing upstream".into())))?
                                 .to_string();
                             *binding.upstream.lock().await = new_upstream;
                             Ok(warp::reply::json(&json!({
@@ -92,7 +96,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 "port": port
                             })))
                         } else {
-                            Err(warp::reject::custom("Binding not found"))
+                            Err(warp::reject::custom(CustomError("Binding not found".into())))
                         }
                     },
                     warp::http::Method::DELETE => {
@@ -105,25 +109,26 @@ async fn main() -> Result<(), Box<dyn Error>> {
                                 "port": port
                             })))
                         } else {
-                            Err(warp::reject::custom("Binding not found"))
+                            Err(warp::reject::custom(CustomError("Binding not found".into())))
                         }
                     },
-                    _ => Err(warp::reject::custom("Unsupported method")),
+                    _ => Err(warp::reject::custom(CustomError("Unsupported method".into()))),
                 }
             }
         });
 
-    let health_route = warp::path("health").map({
+    let health_route = warp::path("health").and_then({
         let bindings = bindings.clone();
         move || {
             let bindings = bindings.clone();
             async move {
                 let map = bindings.lock().await;
-                let info: Vec<_> = map.iter().map(|(&port, binding)| {
-                    let upstream = binding.upstream.blocking_lock().clone();
-                    json!({ "port": port, "upstream": upstream })
-                }).collect();
-                warp::reply::json(&json!({ "bindings": info }))
+                let mut info = Vec::new();
+                for (&port, binding) in map.iter() {
+                    let upstream = binding.upstream.lock().await.clone();
+                    info.push(json!({ "port": port, "upstream": upstream }));
+                }
+                Ok::<_, warp::Rejection>(warp::reply::json(&json!({ "bindings": info })))
             }
         }
     });
@@ -142,7 +147,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 }
 
 /// Spawns a proxy listener on the given port which routes connections to its configured upstream.
-/// It listens for a shutdown signal (via the oneshot channel) to stop the listener.
+/// It listens for a shutdown signal (via a oneshot channel) to stop the listener.
 fn spawn_proxy(port: u16, _initial_upstream: String, mut shutdown_rx: oneshot::Receiver<()>, bindings: BindingMap) {
     tokio::spawn(async move {
         let addr = format!("127.0.0.1:{}", port);
@@ -209,6 +214,29 @@ fn adjust_request_headers(header_bytes: &[u8]) -> Result<Vec<u8>, Box<dyn Error>
     Ok(adjusted_header.into_bytes())
 }
 
+/// Injects a "Proxy-Authorization: Basic ..." header into the CONNECT header.
+/// It inserts the new header before the final blank line.
+fn inject_proxy_auth(header_bytes: &[u8], encoded: &str) -> Vec<u8> {
+    // Convert header bytes to a string (assuming valid UTF-8).
+    let header_str = std::str::from_utf8(header_bytes).unwrap();
+    // Split the header into lines.
+    let mut lines: Vec<String> = header_str.split("\r\n").map(String::from).collect();
+    // Remove trailing empty line if present.
+    while let Some(last) = lines.last() {
+        if last.is_empty() {
+            lines.pop();
+        } else {
+            break;
+        }
+    }
+    // Insert the proxy auth header.
+    lines.push(format!("Proxy-Authorization: Basic {}", encoded));
+    // Reassemble with CRLF and add the final CRLF.
+    let new_header = lines.join("\r\n") + "\r\n\r\n";
+    new_header.into_bytes()
+}
+
+
 /// Handles a client connection, determining whether it is a CONNECT (HTTPS) request or a standard HTTP request.
 /// For CONNECT requests, it tunnels data after relaying the upstream's response.
 /// For other requests, it adjusts headers before forwarding.
@@ -243,13 +271,29 @@ pub async fn handle_connection(mut client_stream: TcpStream, upstream_addr: Stri
     let method = req.method.ok_or("No HTTP method found")?;
     println!("Received {} request", method);
 
-    // Connect to the configured upstream proxy.
-    let mut upstream_stream = TcpStream::connect(&upstream_addr).await?;
-    println!("Connected to upstream proxy at {}", upstream_addr);
+    // Parse the upstream URL to extract host and port.
+    let parsed_url = url::Url::parse(&upstream_addr)?;
+    let host = parsed_url.host_str().ok_or("Invalid upstream host")?;
+    let port = parsed_url.port_or_known_default().ok_or("Invalid upstream port")?;
+    let connect_addr = format!("{}:{}", host, port);
+    println!("Connecting to upstream proxy at {}", connect_addr);
+
+    let mut upstream_stream = TcpStream::connect(&connect_addr).await?;
 
     if method.eq_ignore_ascii_case("CONNECT") {
-        // For HTTPS CONNECT requests, forward the header as-is.
-        upstream_stream.write_all(&header_bytes).await?;
+        // For CONNECT requests, check if the upstream URL contains credentials.
+        let mut header_to_send = header_bytes.clone();
+        if !parsed_url.username().is_empty() {
+            let user = parsed_url.username();
+            let pass = parsed_url.password().unwrap_or("");
+            let credentials = format!("{}:{}", user, pass);
+            let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
+            header_to_send = inject_proxy_auth(&header_bytes, &encoded);
+            println!("Injected Proxy-Authorization header");
+            println!("Sending CONNECT header:\n{}", String::from_utf8_lossy(&header_to_send));
+        }
+        // Forward the (possibly modified) CONNECT header.
+        upstream_stream.write_all(&header_to_send).await?;
         upstream_stream.flush().await?;
 
         // Read upstream's response header.
@@ -277,9 +321,8 @@ pub async fn handle_connection(mut client_stream: TcpStream, upstream_addr: Stri
 
         // Tunnel data between client and upstream.
         let _ = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
-
     } else {
-        // For regular HTTP requests, adjust the headers.
+        // For regular HTTP requests, adjust headers.
         let adjusted_header = adjust_request_headers(&header_bytes)?;
         upstream_stream.write_all(&adjusted_header).await?;
 
@@ -293,7 +336,7 @@ pub async fn handle_connection(mut client_stream: TcpStream, upstream_addr: Stri
         upstream_stream.flush().await?;
 
         // Relay the remainder of the connection.
-        let client_stream = client_reader.into_inner();
+        let mut client_stream = client_reader.into_inner();
         let _ = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
     }
 
