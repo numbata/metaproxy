@@ -1,12 +1,11 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use warp::http::StatusCode;
 use warp::test::request;
 
 use metaproxy::api;
-use metaproxy::proxy::{BindingMap, ProxyBinding};
+use metaproxy::proxy::BindingMap;
 
 #[tokio::test]
 async fn test_health_endpoint() {
