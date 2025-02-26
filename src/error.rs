@@ -116,12 +116,11 @@ mod tests {
 
     #[test]
     fn test_from_io_error() {
-        let io_err = IoError::new(ErrorKind::NotFound, "file not found");
-        let err: Error = io_err.into();
-
-        match err {
-            Error::Io(_) => assert!(true),
-            _ => panic!("Expected Error::Io variant"),
+        let io_error = std::io::Error::new(std::io::ErrorKind::Other, "test");
+        let error = Error::from(io_error);
+        match error {
+            Error::Io(_) => {} // Just check that it's the right variant
+            _ => panic!("Expected Io error"),
         }
     }
 
