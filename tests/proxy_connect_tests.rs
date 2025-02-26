@@ -43,7 +43,7 @@ async fn test_connect_request_parsing() {
 
     // Send a CONNECT request
     let connect_request =
-        format!("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+        "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n".to_string();
     client.write_all(connect_request.as_bytes()).await.unwrap();
 
     // Read the response
