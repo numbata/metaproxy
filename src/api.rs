@@ -23,12 +23,37 @@ fn create_proxy_routes(
 ) -> impl Filter<Extract = impl Reply, Error = Rejection> + Clone {
     let bindings_filter = warp::any().map(move || bindings.clone());
     
-    warp::path("proxy")
-        .and(warp::path::param::<u16>().or(warp::any().map(|| 0)).unify())
-        .and(warp::method())
+    // Route for POST requests (create)
+    let post_route = warp::path("proxy")
+        .and(warp::post())
         .and(warp::body::json())
-        .and(bindings_filter)
-        .and_then(handle_proxy_request)
+        .and(bindings_filter.clone())
+        .and_then(|body: Value, bindings: BindingMap| {
+            handle_proxy_request(0, warp::http::Method::POST, body, bindings)
+        });
+    
+    // Route for PUT requests (update)
+    let put_route = warp::path("proxy")
+        .and(warp::path::param::<u16>())
+        .and(warp::put())
+        .and(warp::body::json())
+        .and(bindings_filter.clone())
+        .and_then(|port: u16, body: Value, bindings: BindingMap| {
+            handle_proxy_request(port, warp::http::Method::PUT, body, bindings)
+        });
+    
+    // Route for DELETE requests (delete) - no JSON body required
+    let delete_route = warp::path("proxy")
+        .and(warp::path::param::<u16>())
+        .and(warp::delete())
+        .and(bindings_filter.clone())
+        .and_then(|port: u16, bindings: BindingMap| {
+            // Pass an empty JSON object for the body
+            handle_proxy_request(port, warp::http::Method::DELETE, json!({}), bindings)
+        });
+    
+    // Combine all routes
+    post_route.or(put_route).or(delete_route)
 }
 
 /// Create health check route
