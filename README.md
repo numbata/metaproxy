@@ -23,7 +23,7 @@ A modular HTTP proxy server with dynamic binding configuration via a REST API.
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/metaproxy.git
+git clone https://github.com/numbata/metaproxy.git
 cd metaproxy
 
 # Build the project
