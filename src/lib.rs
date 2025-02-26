@@ -21,14 +21,18 @@
  *
  * ## Quick Start 🚀
  *
- * ```rust
+ * ```rust,no_run
  * use metaproxy::config::Config;
  * use metaproxy::run;
  *
  * #[tokio::main]
  * async fn main() -> Result<(), Box<dyn std::error::Error>> {
- *     // Create a default configuration
- *     let config = Config::default();
+ *     // Create a configuration from command line arguments
+ *     // or create a custom configuration
+ *     let config = Config {
+ *         bind: "127.0.0.1:9999".to_string(),
+ *         request_timeout: 30, // seconds
+ *     };
  *
  *     // Run the proxy server
  *     run(config).await?;
