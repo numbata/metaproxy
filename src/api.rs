@@ -10,6 +10,7 @@ use std::convert::Infallible;
 use warp::{Filter, Reply, Rejection};
 use serde_json::{json, Value};
 use tokio::sync::oneshot;
+use log::{info, warn, error, debug};
 use crate::proxy::{BindingMap, ProxyBinding, spawn_proxy_listener};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -142,11 +143,14 @@ async fn handle_proxy_request(
                 .ok_or_else(|| warp::reject::custom(CustomRejection(Error::Custom("Missing upstream".into()))))?
                 .to_string();
 
+            info!("Creating new proxy binding on port {} with upstream {}", new_port, upstream);
+
             // Get the lock once for the entire operation
             let mut bindings_lock = bindings.lock().await;
             
             // Check if the binding already exists and return error if it does
             if let Some(_) = bindings_lock.get(&new_port) {
+                warn!("Binding on port {} already exists", new_port);
                 return Err(warp::reject::custom(CustomRejection(Error::Custom(format!("Binding on port {} already exists", new_port)))));
             }
 
@@ -158,7 +162,7 @@ async fn handle_proxy_request(
             let upstream_clone = upstream_arc.clone();
             tokio::spawn(async move {
                 if let Err(e) = spawn_proxy_listener(new_port, upstream_clone, shutdown_rx).await {
-                    eprintln!("Error in proxy listener: {}", e);
+                    error!("Error in proxy listener: {}", e);
                 }
             });
 
@@ -168,6 +172,8 @@ async fn handle_proxy_request(
                 upstream: upstream_arc,
                 shutdown_tx,
             });
+
+            debug!("Added binding for port {} to binding map", new_port);
 
             // Drop the lock before returning
             drop(bindings_lock);
@@ -181,6 +187,7 @@ async fn handle_proxy_request(
         warp::http::Method::PUT => {
             // For update, use the path parameter as the port.
             if port == 0 {
+                warn!("Missing port in path for PUT request");
                 return Err(warp::reject::custom(CustomRejection(Error::Custom("Missing port in path".into()))));
             }
             
@@ -190,6 +197,8 @@ async fn handle_proxy_request(
                 .ok_or_else(|| warp::reject::custom(CustomRejection(Error::Custom("Missing upstream".into()))))?
                 .to_string();
 
+            info!("Updating proxy binding on port {} with new upstream {}", port, new_upstream);
+
             // Get the lock once for the entire operation
             let bindings_lock = bindings.lock().await;
             
@@ -198,6 +207,8 @@ async fn handle_proxy_request(
                 // Update the upstream.
                 let mut upstream_lock = binding.upstream.lock().await;
                 *upstream_lock = new_upstream.clone();
+                
+                debug!("Updated upstream for port {} to {}", port, new_upstream);
                 
                 // Drop the upstream lock
                 drop(upstream_lock);
@@ -211,14 +222,18 @@ async fn handle_proxy_request(
                     "upstream": new_upstream
                 })))
             } else {
+                warn!("No binding found for port {} during update", port);
                 Err(warp::reject::custom(CustomRejection(Error::Custom(format!("No binding found for port {}", port)))))
             }
         }
         warp::http::Method::DELETE => {
             // For deletion, use the path parameter as the port.
             if port == 0 {
+                warn!("Missing port in path for DELETE request");
                 return Err(warp::reject::custom(CustomRejection(Error::Custom("Missing port in path".into()))));
             }
+            
+            info!("Deleting proxy binding on port {}", port);
             
             // Get the lock once for the entire operation
             let mut bindings_lock = bindings.lock().await;
@@ -227,6 +242,7 @@ async fn handle_proxy_request(
             if let Some(binding) = bindings_lock.remove(&port) {
                 // Signal the listener to shut down.
                 let _ = binding.shutdown_tx.send(());
+                debug!("Sent shutdown signal to proxy listener on port {}", port);
                 
                 // Drop the bindings lock before returning
                 drop(bindings_lock);
@@ -236,11 +252,13 @@ async fn handle_proxy_request(
                     "port": port
                 })))
             } else {
+                warn!("No binding found for port {} during deletion", port);
                 Err(warp::reject::custom(CustomRejection(Error::Custom(format!("No binding found for port {}", port)))))
             }
         }
         _ => {
             // Method not allowed
+            warn!("Method not allowed: {}", method);
             Err(warp::reject::custom(CustomRejection(Error::Custom("Method not allowed".into()))))
         }
     }
@@ -261,19 +279,26 @@ async fn handle_proxy_request(
 async fn handle_health_request(
     bindings: BindingMap,
 ) -> std::result::Result<impl Reply, Infallible> {
+    debug!("Received health check request");
+    
     let bindings_lock = bindings.lock().await;
-    let mut bindings_json = Vec::new();
-
-    for (port, binding) in bindings_lock.iter() {
-        let upstream = binding.upstream.lock().await.clone();
-        bindings_json.push(json!({
+    let binding_count = bindings_lock.len();
+    
+    let binding_info: Vec<Value> = bindings_lock.iter().map(|(port, binding)| {
+        let upstream = binding.upstream.try_lock().map(|u| u.clone()).unwrap_or_else(|_| "locked".to_string());
+        json!({
             "port": port,
             "upstream": upstream
-        }));
-    }
-
+        })
+    }).collect();
+    
+    drop(bindings_lock);
+    
+    debug!("Health check found {} active bindings", binding_count);
+    
     Ok(warp::reply::json(&json!({
         "status": "ok",
-        "bindings": bindings_json
+        "active_bindings": binding_count,
+        "bindings": binding_info
     })))
 }

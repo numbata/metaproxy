@@ -31,6 +31,7 @@ pub mod proxy;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use log::{info, warn};
 
 use crate::api::create_routes;
 use crate::config::Config;
@@ -63,16 +64,20 @@ use crate::proxy::BindingMap;
 /// }
 /// ```
 pub async fn run(config: Config) -> Result<()> {
-    println!("Starting proxy server on {}", config.bind);
+    info!("Starting proxy server on {}", config.bind);
 
     // Shared state to store active proxy bindings.
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
+    info!("Initialized empty binding map");
 
     // Create API routes
     let routes = create_routes(bindings.clone());
+    info!("Created API routes");
 
     // Start the API server on the specified bind address.
     let bind_addr = config.get_bind_addr()?;
+    info!("Binding to address: {}", bind_addr);
+    
     let (_, server) = warp::serve(routes)
         .bind_with_graceful_shutdown(bind_addr, async {
             tokio::signal::ctrl_c()
@@ -81,7 +86,9 @@ pub async fn run(config: Config) -> Result<()> {
         });
 
     // Run the server
+    info!("Server started, waiting for connections");
     server.await;
-    
+    warn!("Received shutdown signal, stopping server");
+    info!("Server shutdown complete");
     Ok(())
 }

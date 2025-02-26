@@ -21,6 +21,7 @@ use tokio::{
     sync::{Mutex, oneshot},
 };
 use base64::Engine;
+use log::{info, warn, error, debug, trace};
 use crate::error::{Result, Error};
 
 /// A structure representing a proxy binding on a given port,
@@ -66,30 +67,30 @@ pub async fn spawn_proxy_listener(
 ) -> Result<()> {
     // Bind to the specified port.
     let listener = TcpListener::bind(("127.0.0.1", port)).await?;
-    println!("Proxy listener started on port {}", port);
+    info!("Proxy listener started on port {}", port);
 
     tokio::select! {
         _ = async {
             loop {
                 match listener.accept().await {
                     Ok((client_stream, addr)) => {
-                        println!("Accepted connection from {}", addr);
+                        debug!("Accepted connection from {}", addr);
                         let upstream_clone = upstream.clone();
                         tokio::spawn(async move {
                             let upstream_addr = upstream_clone.lock().await.clone();
                             if let Err(e) = handle_connection(client_stream, upstream_addr).await {
-                                eprintln!("Error handling connection: {}", e);
+                                error!("Error handling connection: {}", e);
                             }
                         });
                     }
                     Err(e) => {
-                        eprintln!("Error accepting connection: {}", e);
+                        error!("Error accepting connection: {}", e);
                     }
                 }
             }
         } => {}
         _ = shutdown_rx => {
-            println!("Shutting down proxy listener on port {}", port);
+            info!("Shutting down proxy listener on port {}", port);
         }
     }
 
@@ -213,6 +214,7 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
         
         // Prevent buffer overflow from malformed requests.
         if header_bytes.len() > 8192 {
+            warn!("Request header too large (> 8KB), rejecting");
             return Err(Error::Custom("Request header too large".to_string()));
         }
     }
@@ -225,14 +227,14 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
         .map_err(|e| Error::Custom(format!("Failed to parse HTTP request: {}", e)))?;
     
     let method = req.method.ok_or("No HTTP method found")?;
-    println!("Received {} request", method);
+    debug!("Received {} request", method);
 
     // Parse the upstream URL to extract host and port.
     let parsed_url = url::Url::parse(&upstream_addr)?;
     let host = parsed_url.host_str().ok_or("Invalid upstream host")?;
     let port = parsed_url.port_or_known_default().ok_or("Invalid upstream port")?;
     let connect_addr = format!("{}:{}", host, port);
-    println!("Connecting to upstream proxy at {}", connect_addr);
+    debug!("Connecting to upstream proxy at {}", connect_addr);
 
     let mut upstream_stream = TcpStream::connect(&connect_addr).await?;
 
@@ -245,8 +247,8 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
             let credentials = format!("{}:{}", user, pass);
             let encoded = base64::engine::general_purpose::STANDARD.encode(credentials);
             header_to_send = inject_proxy_auth(&header_bytes, &encoded);
-            println!("Injected Proxy-Authorization header");
-            println!("Sending CONNECT header:\n{}", String::from_utf8_lossy(&header_to_send));
+            debug!("Injected Proxy-Authorization header");
+            trace!("Sending CONNECT header:\n{}", String::from_utf8_lossy(&header_to_send));
         }
         // Forward the (possibly modified) CONNECT header.
         upstream_stream.write_all(&header_to_send).await?;
@@ -279,6 +281,7 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
             
             // Prevent buffer overflow from malformed responses.
             if response_header.len() > 8192 {
+                warn!("Response header too large (> 8KB), terminating connection");
                 return Err(Error::Custom("Response header too large".to_string()));
             }
         }
@@ -287,8 +290,10 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
         client_stream.write_all(&response_header).await?;
         client_stream.flush().await?;
 
+        debug!("Established CONNECT tunnel, starting bidirectional copy");
         // Tunnel data between client and upstream.
-        let _ = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
+        let (client_bytes, upstream_bytes) = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
+        debug!("CONNECT tunnel closed. Transferred {} bytes from client and {} bytes from upstream", client_bytes, upstream_bytes);
     } else {
         // For regular HTTP requests, adjust headers.
         let adjusted_header = adjust_request_headers(&header_bytes)?;
@@ -301,6 +306,7 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
                     .map_err(|_| Error::Custom("Invalid Content-Length header".to_string()))?
                     .parse::<usize>()
                     .map_err(|_| Error::Custom("Invalid Content-Length value".to_string()))?;
+                debug!("Forwarding request body of {} bytes", content_length);
                 let mut body = vec![0; content_length];
                 client_reader.read_exact(&mut body).await?;
                 upstream_stream.write_all(&body).await?;
@@ -308,9 +314,11 @@ async fn handle_connection(mut client_stream: TcpStream, upstream_addr: String) 
         }
         upstream_stream.flush().await?;
 
+        debug!("Starting bidirectional copy for HTTP request");
         // Relay the remainder of the connection.
         let mut client_stream = client_reader.into_inner();
-        let _ = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
+        let (client_bytes, upstream_bytes) = copy_bidirectional(&mut client_stream, &mut upstream_stream).await?;
+        debug!("HTTP connection closed. Transferred {} bytes from client and {} bytes from upstream", client_bytes, upstream_bytes);
     }
     
     Ok(())

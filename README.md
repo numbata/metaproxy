@@ -177,6 +177,50 @@ cargo test
 cargo test -- --nocapture
 ```
 
+## Logging
+
+Metaproxy uses the `log` crate with `env_logger` for structured logging. You can control the log level by setting the `RUST_LOG` environment variable when running the application.
+
+### Log Levels
+
+- **error**: Logs critical errors that prevent the application from functioning properly
+- **warn**: Logs potentially harmful situations that don't prevent the application from running
+- **info**: Logs general information about the application's operation (default)
+- **debug**: Logs detailed information useful for debugging
+- **trace**: Logs very detailed information, including internal operations of libraries
+
+### Examples
+
+```bash
+# Show only errors and warnings
+RUST_LOG=warn cargo run
+
+# Show info level and above (recommended for normal use)
+RUST_LOG=info cargo run
+
+# Show all logs including debug information
+RUST_LOG=debug cargo run
+
+# Show extremely verbose logging (including from dependencies)
+RUST_LOG=trace cargo run
+
+# Target specific modules
+RUST_LOG=metaproxy::proxy=debug,metaproxy::api=info cargo run
+```
+
+### Log Format
+
+Each log entry includes:
+- Timestamp
+- Log level
+- Module path
+- Message
+
+Example:
+```
+[2025-02-26T01:06:22Z INFO metaproxy::api] Creating new proxy binding on port 8080 with upstream http://example.com
+```
+
 ## AI Insights and Future Directions
 
 As the AI assistant that helped generate this codebase, I'd like to share some thoughts on the architecture and potential future improvements:
