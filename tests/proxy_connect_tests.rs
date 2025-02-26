@@ -85,12 +85,10 @@ async fn test_bidirectional_data_copying() {
     let timeout_result = timeout(Duration::from_secs(1), copy_future).await;
 
     // Either we got a result or we timed out (which is fine for this test)
-    if let Ok(result) = timeout_result {
-        if let Ok((client_to_server, server_to_client)) = result {
-            // Just verify we got some data
-            assert!(client_to_server > 0);
-            assert!(server_to_client > 0);
-        }
+    if let Ok(Ok((client_to_server, server_to_client))) = timeout_result {
+        // Just verify we got some data
+        assert!(client_to_server > 0);
+        assert!(server_to_client > 0);
     }
 
     // Test passes if we get here without hanging
