@@ -1,23 +1,72 @@
 /*!
- * # Metaproxy
+ * # Metaproxy 🚀
  *
  * A modular HTTP proxy server with dynamic binding configuration via a REST API.
  *
- * ## Features
+ * ## Features ✨
  *
- * - **Dynamic Proxy Bindings**: Create, update, and delete proxy bindings at runtime via REST API
- * - **HTTP Proxy**: Support for standard HTTP proxying with header adjustment
- * - **CONNECT Tunneling**: Support for HTTPS tunneling via the CONNECT method
- * - **Modular Architecture**: Clean separation of concerns for better maintainability and testability
- * - **Async I/O**: Built on Tokio for high-performance asynchronous I/O
- * - **Request Timeouts**: Configurable timeouts for upstream requests
+ * - **Dynamic Proxy Bindings** 🔄: Create, update, and delete proxy bindings at runtime via REST API
+ * - **HTTP Proxy** 🌐: Support for standard HTTP proxying with header adjustment
+ * - **CONNECT Tunneling** 🔒: Support for HTTPS tunneling via the CONNECT method
+ * - **Modular Architecture** 🧩: Clean separation of concerns for better maintainability and testability
+ * - **Async I/O** ⚡: Built on Tokio for high-performance asynchronous I/O
+ * - **Request Timeouts** ⏱️: Configurable timeouts for upstream requests
  *
- * ## Modules
+ * ## Modules 📦
  *
  * - `api`: API routes and handlers for managing proxy bindings
  * - `config`: Configuration handling and command line argument parsing
  * - `error`: Error types and handling
  * - `proxy`: Core proxy functionality including request handling and connection management
+ *
+ * ## Quick Start 🚀
+ *
+ * ```rust
+ * use metaproxy::config::Config;
+ * use metaproxy::run;
+ *
+ * #[tokio::main]
+ * async fn main() -> Result<(), Box<dyn std::error::Error>> {
+ *     // Create a default configuration
+ *     let config = Config::default();
+ *
+ *     // Run the proxy server
+ *     run(config).await?;
+ *
+ *     Ok(())
+ * }
+ * ```
+ *
+ * ## API Usage Examples 📝
+ *
+ * ### Creating a Proxy Binding
+ *
+ * ```bash
+ * curl -X POST http://127.0.0.1:8000/proxy \
+ *   -H "Content-Type: application/json" \
+ *   -d '{"port": 9000, "upstream": "http://127.0.0.1:8080"}'
+ * ```
+ *
+ * ### Using the Proxy
+ *
+ * ```bash
+ * # HTTP request through the proxy
+ * curl -x http://127.0.0.1:9000 http://example.com
+ *
+ * # HTTPS request through the proxy
+ * curl -x http://127.0.0.1:9000 https://example.com
+ * ```
+ *
+ * ## Architecture 🏗️
+ *
+ * Metaproxy uses a modular architecture with the following components:
+ *
+ * 1. **API Server**: Handles REST API requests for managing proxy bindings
+ * 2. **Proxy Manager**: Manages the lifecycle of proxy bindings
+ * 3. **Connection Handler**: Processes incoming client connections
+ * 4. **Request Processor**: Handles HTTP and HTTPS requests
+ *
+ * The proxy server uses Tokio for asynchronous I/O and Warp for the REST API.
  */
 
 /// API module for managing proxy bindings via REST endpoints

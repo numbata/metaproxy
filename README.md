@@ -6,6 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Code Style](https://img.shields.io/badge/code%20style-rustfmt-blue.svg)](https://github.com/rust-lang/rustfmt)
+[![Documentation](https://img.shields.io/badge/docs-GitHub%20Pages-blue)](https://numbata.github.io/metaproxy/)
 
 A modular HTTP proxy server with dynamic binding configuration via a REST API.
 
@@ -195,6 +196,25 @@ When a timeout occurs, the connection is terminated and an error is logged:
 ```
 [2025-02-26T01:15:22Z WARN metaproxy::proxy] Connection to upstream timed out after 5 seconds: example.com:80
 ```
+
+## 📚 Documentation
+
+The API documentation for Metaproxy is automatically generated and published to GitHub Pages with each push to the main branch.
+
+### 🔗 Online Documentation
+
+Visit the [Metaproxy API Documentation](https://numbata.github.io/metaproxy/) to browse the latest API documentation.
+
+### 📖 Local Documentation
+
+You can also generate and view the documentation locally:
+
+```bash
+# Generate documentation
+cargo doc --no-deps --open
+```
+
+This will build the documentation and open it in your default web browser.
 
 ## 💻 Development
 

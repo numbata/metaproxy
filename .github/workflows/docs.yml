@@ -1,0 +1,57 @@
+name: Deploy Docs to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+        
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Setup Pages
+        uses: actions/configure-pages@v3
+        
+      - name: Build Documentation
+        run: |
+          cargo doc --no-deps --document-private-items
+          
+          # Create an index.html file that redirects to the metaproxy crate documentation
+          echo '<meta http-equiv="refresh" content="0; url=metaproxy/index.html">' > target/doc/index.html
+          
+          # Copy the docs to the GitHub Pages directory
+          mkdir -p _site
+          cp -r target/doc/* _site/
+          
+          # Add a .nojekyll file to bypass GitHub Pages Jekyll processing
+          touch _site/.nojekyll
+          
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
