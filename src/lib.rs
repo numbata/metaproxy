@@ -29,10 +29,10 @@ pub mod error;
 /// Core proxy functionality module for handling connections and data transfer
 pub mod proxy;
 
+use log::{info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::{info, warn};
 
 use crate::api::create_routes;
 use crate::config::Config;
@@ -66,7 +66,7 @@ use crate::proxy::BindingMap;
 /// ```
 pub async fn run(config: Config) -> Result<()> {
     info!("Starting proxy server on {}", config.bind);
-    
+
     // Log the timeout configuration
     if let Some(timeout) = config.get_request_timeout() {
         info!("Request timeout set to {} seconds", timeout.as_secs());
@@ -88,13 +88,12 @@ pub async fn run(config: Config) -> Result<()> {
     // Start the API server on the specified bind address.
     let bind_addr = config.get_bind_addr()?;
     info!("Binding to address: {}", bind_addr);
-    
-    let (_, server) = warp::serve(routes)
-        .bind_with_graceful_shutdown(bind_addr, async {
-            tokio::signal::ctrl_c()
-                .await
-                .expect("failed to install CTRL+C signal handler");
-        });
+
+    let (_, server) = warp::serve(routes).bind_with_graceful_shutdown(bind_addr, async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install CTRL+C signal handler");
+    });
 
     // Run the server
     info!("Server started, waiting for connections");

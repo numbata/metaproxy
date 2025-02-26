@@ -118,7 +118,7 @@ mod tests {
     fn test_from_io_error() {
         let io_err = IoError::new(ErrorKind::NotFound, "file not found");
         let err: Error = io_err.into();
-        
+
         match err {
             Error::Io(_) => assert!(true),
             _ => panic!("Expected Error::Io variant"),
@@ -128,7 +128,7 @@ mod tests {
     #[test]
     fn test_from_str() {
         let err: Error = "test error".into();
-        
+
         match err {
             Error::Custom(msg) => assert_eq!(msg, "test error"),
             _ => panic!("Expected Error::Custom variant"),
@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn test_from_string() {
         let err: Error = "test error".to_string().into();
-        
+
         match err {
             Error::Custom(msg) => assert_eq!(msg, "test error"),
             _ => panic!("Expected Error::Custom variant"),
@@ -149,7 +149,7 @@ mod tests {
     fn test_display() {
         let err: Error = "test error".into();
         assert_eq!(format!("{}", err), "test error");
-        
+
         let io_err = IoError::new(ErrorKind::NotFound, "file not found");
         let err: Error = io_err.into();
         assert!(format!("{}", err).contains("IO error"));

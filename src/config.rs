@@ -5,10 +5,10 @@
  * including command line argument parsing and validation.
  */
 
+use crate::error::Result;
 use clap::Parser;
 use std::net::SocketAddr;
 use std::time::Duration;
-use crate::error::Result;
 
 /// Proxy server configuration
 ///
@@ -63,7 +63,9 @@ impl Config {
     ///
     /// A `Result` containing the parsed `SocketAddr` or an error if parsing fails
     pub fn get_bind_addr(&self) -> Result<SocketAddr> {
-        self.bind.parse().map_err(|e| format!("Invalid bind address: {}", e).into())
+        self.bind
+            .parse()
+            .map_err(|e| format!("Invalid bind address: {}", e).into())
     }
 
     /// Get the request timeout as a Duration

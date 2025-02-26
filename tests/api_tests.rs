@@ -11,19 +11,15 @@ use metaproxy::proxy::BindingMap;
 async fn test_health_endpoint() {
     // Create an empty binding map
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
-    
+
     // Create the API routes
     let routes = api::create_routes(bindings.clone(), None);
-    
+
     // Test the health endpoint
-    let resp = request()
-        .method("GET")
-        .path("/health")
-        .reply(&routes)
-        .await;
-    
+    let resp = request().method("GET").path("/health").reply(&routes).await;
+
     assert_eq!(resp.status(), StatusCode::OK);
-    
+
     // Parse the response body
     let body = String::from_utf8(resp.body().to_vec()).unwrap();
     assert!(body.contains("\"status\":\"ok\""));
@@ -34,10 +30,10 @@ async fn test_health_endpoint() {
 async fn test_create_proxy_binding() {
     // Create an empty binding map
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
-    
+
     // Create the API routes
     let routes = api::create_routes(bindings.clone(), None);
-    
+
     // Test creating a new proxy binding
     let resp = request()
         .method("POST")
@@ -48,18 +44,18 @@ async fn test_create_proxy_binding() {
         }))
         .reply(&routes)
         .await;
-    
+
     assert_eq!(resp.status(), StatusCode::OK);
-    
+
     // Parse the response body
     let body = String::from_utf8(resp.body().to_vec()).unwrap();
     assert!(body.contains("\"status\":\"created\""));
     assert!(body.contains("\"port\":9000"));
-    
+
     // Check that the binding was created in the map
     let bindings_lock = bindings.lock().await;
     assert!(bindings_lock.contains_key(&9000));
-    
+
     // Check the upstream value
     let binding = bindings_lock.get(&9000).unwrap();
     let upstream = binding.upstream.lock().await;
