@@ -54,7 +54,7 @@ pub struct ProxyBinding {
 /// A result indicating success or failure
 pub async fn spawn_proxy_listener(
     port: u16,
-    upstream_addr: Arc<Mutex<String>>,
+    upstream: Arc<Mutex<String>>,
     shutdown_rx: oneshot::Receiver<()>,
     request_timeout: Option<Duration>,
 ) -> Result<()> {
@@ -64,7 +64,7 @@ pub async fn spawn_proxy_listener(
     info!("Proxy listener started on {}", addr);
 
     tokio::select! {
-        result = handle_connections(listener, upstream_addr, request_timeout) => {
+        result = handle_connections(listener, upstream, request_timeout) => {
             result
         }
         _ = shutdown_rx => {
@@ -101,12 +101,13 @@ async fn handle_connections(
         // Get the current upstream address
         let upstream_addr = {
             let upstream_lock = upstream.lock().await;
-            upstream_lock.clone()
+            (*upstream_lock).clone()
         };
 
         // Spawn a task to handle the connection
+        let timeout_clone = request_timeout;
         tokio::spawn(async move {
-            if let Err(e) = handle_connection(client_stream, upstream_addr, request_timeout).await {
+            if let Err(e) = handle_connection(client_stream, upstream_addr, timeout_clone).await {
                 warn!("Error handling connection: {}", e);
             }
         });
@@ -128,56 +129,19 @@ async fn handle_connections(
 ///
 /// A result indicating success or failure
 async fn handle_connection(
-    mut client_stream: TcpStream,
+    client_stream: TcpStream,
     upstream_addr: String,
     request_timeout: Option<Duration>,
 ) -> Result<()> {
-    // Buffer to read the initial request
-    let mut buf = [0u8; 4096];
+    // Peek at the first bytes to determine if this is a CONNECT request
+    let mut peek_buf = [0u8; 8];
+    let n = client_stream.peek(&mut peek_buf).await?;
 
-    // Read the initial data from the client
-    let n = match client_stream.read(&mut buf).await {
-        Ok(0) => return Err(Error::Custom("Client closed connection".to_string())),
-        Ok(n) => n,
-        Err(e) => return Err(Error::from(e)),
-    };
-
-    // Check if this is a CONNECT request (HTTPS)
-    if n >= 7 && &buf[..7] == b"CONNECT" {
-        debug!("CONNECT request detected, handling as HTTPS");
-        // Extract the target from the CONNECT request
-        let request_str = std::str::from_utf8(&buf[..n])
-            .map_err(|_| Error::Custom("Invalid UTF-8 in CONNECT request".to_string()))?;
-
-        // Parse the CONNECT request to extract the target host:port
-        let lines: Vec<&str> = request_str.split("\r\n").collect();
-        if lines.is_empty() {
-            return Err(Error::Custom("Empty CONNECT request".to_string()));
-        }
-
-        let connect_line = lines[0];
-        let parts: Vec<&str> = connect_line.split_whitespace().collect();
-        if parts.len() < 2 {
-            return Err(Error::Custom("Invalid CONNECT request format".to_string()));
-        }
-
-        let target = parts[1];
-        debug!("CONNECT request for {}", target);
-
-        // Send 200 Connection Established to the client
-        let response = "HTTP/1.1 200 Connection Established\r\n\r\n";
-        client_stream.write_all(response.as_bytes()).await?;
-
-        // Handle the CONNECT tunnel
+    if n >= 7 && &peek_buf[..7] == b"CONNECT" {
+        // This is a CONNECT request (HTTPS tunneling)
         handle_connect(client_stream, &upstream_addr, request_timeout).await
     } else {
-        debug!("HTTP request detected");
-        // This is a regular HTTP request
-        // Create a buffer with the data we've already read
-        let mut buffer = Vec::new();
-        buffer.extend_from_slice(&buf[..n]);
-
-        // Handle the HTTP request
+        // This is a standard HTTP request
         handle_http_request(client_stream, &upstream_addr, request_timeout).await
     }
 }
@@ -259,9 +223,13 @@ async fn handle_connect(
     // Connect to the upstream proxy
     let mut upstream_stream = if let Some(timeout_duration) = request_timeout {
         match timeout(timeout_duration, TcpStream::connect(&upstream_host_port)).await {
-            Ok(result) => result,
+            Ok(result) => result?,
             Err(_) => {
-                debug!("Connection to upstream proxy timed out");
+                warn!(
+                    "Connection to upstream proxy timed out after {:?}: {}",
+                    timeout_duration, upstream_host_port
+                );
+                // Send an error response to the client
                 let response = "HTTP/1.1 504 Gateway Timeout\r\n\
                      Connection: close\r\n\
                      Content-Length: 27\r\n\
@@ -269,12 +237,15 @@ async fn handle_connect(
                      Connection timeout occurred."
                     .to_string();
                 client_stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                return Err(Error::Custom(format!(
+                    "Connection to upstream proxy timed out after {:?}",
+                    timeout_duration
+                )));
             }
         }
     } else {
-        Ok(TcpStream::connect(&upstream_host_port).await?)
-    }?;
+        TcpStream::connect(&upstream_host_port).await?
+    };
 
     // If the upstream proxy requires authentication, add the Proxy-Authorization header
     let username = upstream_url.username();
@@ -443,9 +414,13 @@ async fn handle_http_request(
     // Connect to the upstream proxy
     let mut upstream_stream = if let Some(timeout_duration) = request_timeout {
         match timeout(timeout_duration, TcpStream::connect(&upstream_host_port)).await {
-            Ok(result) => result,
+            Ok(result) => result?,
             Err(_) => {
-                debug!("Connection to upstream proxy timed out");
+                warn!(
+                    "Connection to upstream proxy timed out after {:?}: {}",
+                    timeout_duration, upstream_host_port
+                );
+                // Send an error response to the client
                 let response = "HTTP/1.1 504 Gateway Timeout\r\n\
                      Connection: close\r\n\
                      Content-Length: 27\r\n\
@@ -453,12 +428,15 @@ async fn handle_http_request(
                      Connection timeout occurred."
                     .to_string();
                 client_stream.write_all(response.as_bytes()).await?;
-                return Ok(());
+                return Err(Error::Custom(format!(
+                    "Connection to upstream proxy timed out after {:?}",
+                    timeout_duration
+                )));
             }
         }
     } else {
-        Ok(TcpStream::connect(&upstream_host_port).await?)
-    }?;
+        TcpStream::connect(&upstream_host_port).await?
+    };
 
     // Modify the request to use absolute URLs and add proxy authentication if needed
     let mut modified_request = Vec::new();
