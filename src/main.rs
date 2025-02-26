@@ -3,6 +3,7 @@ use std::{
     error::Error,
     str,
     sync::Arc,
+    net::{SocketAddr, ToSocketAddrs},
 };
 use tokio::{
     io::{copy_bidirectional, AsyncWriteExt, BufReader},
@@ -14,6 +15,7 @@ use base64::Engine;
 use warp::Filter;
 use serde_json::json;
 use httparse;
+use clap::{Parser};
 
 // Define a custom error type for warp rejections.
 #[derive(Debug)]
@@ -32,8 +34,21 @@ struct ProxyBinding {
 /// Shared type for dynamic proxy bindings.
 type BindingMap = Arc<Mutex<HashMap<u16, ProxyBinding>>>;
 
+/// Proxy server configuration
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Address to bind the proxy server to
+    #[arg(long, default_value = "127.0.0.1:8000")]
+    bind: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    let args = Args::parse();
+    let addr: SocketAddr = args.bind.to_socket_addrs()?.next().expect("Invalid bind address format. Expected format: 127.0.0.1:8000");
+    println!("Starting proxy server on {}", addr);
+
     // Shared state to store active proxy bindings.
     let bindings: BindingMap = Arc::new(Mutex::new(HashMap::new()));
 
@@ -136,14 +151,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // Combine API routes.
     let routes = proxy_routes.or(health_route);
 
-    // Start the API server on port 8000.
-    tokio::spawn(warp::serve(routes).run(([127, 0, 0, 1], 8000)));
-    println!("API server running on http://127.0.0.1:8000");
+    // Start the API server on the specified bind address.
+    let (_, server) = warp::serve(routes)
+        .bind_with_graceful_shutdown(addr, async {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("failed to install CTRL+C signal handler");
+        });
 
-    // Keep the main task alive indefinitely.
-    loop {
-        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-    }
+    tokio::join!(server);
+    Ok(())
 }
 
 /// Spawns a proxy listener on the given port which routes connections to its configured upstream.
