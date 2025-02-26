@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  packages: read
+
+jobs:
+  prepare-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version in Cargo.toml
+        run: |
+          sed -i "s/^version = .*/version = \"${{ github.event.inputs.version }}\"/" Cargo.toml
+
+      - name: Commit and tag
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add Cargo.toml
+          git commit -m "chore: release v${{ github.event.inputs.version }}"
+          git tag -a "v${{ github.event.inputs.version }}" -m "Release v${{ github.event.inputs.version }}"
+          git push
+          git push --tags
+
+  build:
+    needs: prepare-release
+    uses: ./.github/workflows/build.yml
+
+  create-release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: "v${{ github.event.inputs.version }}"
+          tag_name: "v${{ github.event.inputs.version }}"
+          draft: false
+          prerelease: false
+          files: |
+            */metaproxy-*.tar.gz
+          body: |
+            Release v${{ github.event.inputs.version }}
+            
+            Included binaries:
+            - Linux (x86_64)
+            - macOS (x86_64)
+            - macOS (ARM64)
